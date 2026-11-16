@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+# local dev database (embedded Postgres files)
+.data/
+
+# Local documents and agent notes are not published
+docs/
+.agents/
+.codex/
+*.md
+!/README.md
+*.pdf
+*.docx
