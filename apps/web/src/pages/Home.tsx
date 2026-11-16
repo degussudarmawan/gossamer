@@ -3,14 +3,16 @@ import { motion, useScroll, useTransform, type MotionValue } from 'motion/react'
 import ApiStatus from '../components/ApiStatus';
 import OrbitSpider, { ringPoint } from '../components/OrbitSpider';
 import { useElementSize } from '../hooks/useElementSize';
+import { useFontReady } from '../hooks/useFontReady';
 
 // The landing page is one pinned scene that scrolling plays through:
 //   the title, circled by the spider
 //   -> the title becomes someone's worry
-//   -> kind replies arrive, and each sentence IS a thread: written from the
-//      spider's ring out to the edge of the screen
+//   -> kind replies arrive, and each sentence IS a thread
+// The cloth behind it changes with each beat: denim, then suede, then olive.
 // Three short captions are the only explanation.
 
+const FONT = 'Quicksand Variable';
 const WORRY = 'my cat died this morning';
 
 // Each reply's thread, laid out twice.
@@ -43,18 +45,32 @@ const CAPTIONS = [
 ];
 // Scrolling hurries the spider, so its ring is finished before the first reply needs it.
 const RING_DONE_BY = [0.06, 0.34];
+// The cloth: denim under the title, suede under the worry, olive once replies arrive.
+const CLOTH_AT = [0.06, 0.2, 0.3, 0.44];
+const CLOTH = ['#54708a', '#5a4d43', '#5a4d43', '#6b6a40'];
+
+type Point = { x: number; y: number };
 
 type Thread = {
   text: string;
   /** The path the words are written along, always running left to right so they read upright. */
   reads: string;
-  /** The same path from the ring outward: the direction the thread is spun in. */
+  /** The same path from its first anchor to its second: the direction the thread is spun in. */
   spun: string;
   length: number;
   size: number;
 };
 
 export const isWide = (width: number) => width >= 1024;
+
+// Width of a piece of text in ems, measured in the real font.
+let ruler: CanvasRenderingContext2D | null | undefined;
+function emWidth(text: string) {
+  ruler ??= document.createElement('canvas').getContext('2d');
+  if (!ruler) return text.length * 0.5;
+  ruler.font = `400 100px "${FONT}"`;
+  return ruler.measureText(text).width / 100;
+}
 
 // A thread sags slightly between its two ends, and its sentence is sized and
 // spaced to span the whole thing.
@@ -64,8 +80,8 @@ function buildThreads(width: number, height: number, rx: number, ry: number): Th
   const wide = isWide(width);
 
   return REPLIES.map((reply, i) => {
-    let a: { x: number; y: number };
-    let b: { x: number; y: number };
+    let a: Point;
+    let b: Point;
     if (wide) {
       const angle = (reply.wide * Math.PI) / 180;
       const dir = { x: Math.cos(angle), y: Math.sin(angle) };
@@ -83,8 +99,7 @@ function buildThreads(width: number, height: number, rx: number, ry: number): Th
     // is cut off, more where the anchor is another sentence so the two don't collide.
     const span = Math.hypot(b.x - a.x, b.y - a.y);
     const dir = { x: (b.x - a.x) / span, y: (b.y - a.y) / span };
-    const onEdge = (p: typeof a) =>
-      wide || p.x < 1 || p.y < 1 || p.x > width - 1 || p.y > height - 1;
+    const onEdge = (p: Point) => wide || p.x < 1 || p.y < 1 || p.x > width - 1 || p.y > height - 1;
     const insetA = onEdge(a) ? 14 : 34;
     const insetB = onEdge(b) ? 14 : 34;
     a = { x: a.x + dir.x * insetA, y: a.y + dir.y * insetA };
@@ -92,15 +107,15 @@ function buildThreads(width: number, height: number, rx: number, ry: number): Th
     const length = span - insetA - insetB;
     const sag = length * (wide ? 0.035 : 0.02) * (i % 2 ? 1 : -1);
     const c = { x: (a.x + b.x) / 2 - dir.y * sag, y: (a.y + b.y) / 2 + dir.x * sag };
-    const curve = (p: typeof a, q: typeof a) =>
+    const curve = (p: Point, q: Point) =>
       `M${p.x.toFixed(1)} ${p.y.toFixed(1)}Q${c.x.toFixed(1)} ${c.y.toFixed(1)} ${q.x.toFixed(1)} ${q.y.toFixed(1)}`;
 
-    // Letters average about 0.46em wide. Aim for the sentence to fill the thread
-    // with barely open spacing, within a narrow range of sizes.
-    const size = Math.max(wide ? 20 : 15, Math.min(wide ? 32 : 21, length / (reply.text.length * 0.46 * 1.05)));
+    // Size the sentence to fill the thread with barely open spacing, within a
+    // narrow range of sizes.
+    const ems = emWidth(reply.text);
+    const size = Math.max(wide ? 20 : 15, Math.min(wide ? 30 : 20, length / (ems * 1.05)));
     // A short sentence on a long thread is written again instead of being stretched thin.
-    const natural = reply.text.length * 0.46 * size;
-    const times = Math.max(1, Math.round(length / (natural * 1.3)));
+    const times = Math.max(1, Math.round(length / (ems * size * 1.3)));
 
     return {
       text: Array(times).fill(reply.text).join('   ·   '),
@@ -112,8 +127,8 @@ function buildThreads(width: number, height: number, rx: number, ry: number): Th
   });
 }
 
-// One reply: a sentence written along its thread, revealed from the ring outward
-// as if it were being spun.
+// One reply: a sentence written along its thread, revealed from its first
+// anchor onward as if it were being spun.
 function WordThread({
   id,
   thread,
@@ -156,7 +171,7 @@ function Caption({
 }) {
   const opacity = useTransform(progress, fade, to);
   return (
-    <motion.p className="absolute inset-x-0 text-center text-sm text-ink-soft" style={{ opacity }}>
+    <motion.p className="absolute inset-x-0 text-center text-sm font-medium text-ink-soft" style={{ opacity }}>
       {text}
     </motion.p>
   );
@@ -166,11 +181,13 @@ export default function Home() {
   const scene = useRef<HTMLDivElement>(null);
   const [stage, { width, height }] = useElementSize<HTMLDivElement>();
   const { scrollYProgress: progress } = useScroll({ target: scene, offset: ['start start', 'end end'] });
+  const fontReady = useFontReady(FONT);
 
   const titleOpacity = useTransform(progress, TITLE_OUT, [1, 0]);
   const worryOpacity = useTransform(progress, WORRY_IN, [0, 1]);
   const hintOpacity = useTransform(progress, [0, 0.04], [1, 0]);
   const lead = useTransform(progress, RING_DONE_BY, [0, 2 * Math.PI]);
+  const cloth = useTransform(progress, CLOTH_AT, CLOTH);
 
   // The loop the spider walks: roomy enough to hold two lines of title and a caption.
   // On wide screens it leaves a ring of silk for the replies to hang from; on a
@@ -178,17 +195,20 @@ export default function Home() {
   const wide = isWide(width);
   const rx = Math.min(width * 0.4, 250);
   const ry = wide ? Math.min(height * 0.16, 125) : Math.min(height * 0.11, 95);
-  const threads = useMemo(() => buildThreads(width, height, rx, ry), [width, height, rx, ry]);
+  // fontReady is a dependency because sentence widths are measured in the real font
+  const threads = useMemo(() => buildThreads(width, height, rx, ry), [width, height, rx, ry, fontReady]);
 
   return (
     // Tall, so there is distance to scroll; the stage inside stays pinned to the screen.
     <div ref={scene} className="h-[450vh]">
-      <div ref={stage} className="sticky top-0 h-dvh overflow-hidden">
+      <motion.div ref={stage} className="sticky top-0 h-dvh overflow-hidden" style={{ backgroundColor: cloth }}>
+        <div className="absolute inset-0 fabric" aria-hidden="true" />
+
         {width > 0 && (
           <svg className="pointer-events-none absolute inset-0 h-full w-full">
             {threads.map((thread, i) => (
               <WordThread
-                key={thread.text}
+                key={REPLIES[i]!.text}
                 id={`reply-${i}`}
                 thread={thread}
                 at={FIRST_REPLY + i * REPLY_GAP}
@@ -203,27 +223,21 @@ export default function Home() {
         )}
 
         {/* The wordmark dangles from the top edge on its own strand. */}
-        <span className="absolute top-8 left-6 px-1 font-hand text-lg leading-none tracking-[0.18em] paper before:absolute before:bottom-full before:left-2 before:h-9 before:w-px before:bg-ink">
+        <span className="absolute top-8 left-6 px-1 font-hand text-lg leading-none tracking-[0.18em] before:absolute before:bottom-full before:left-2 before:mb-1 before:h-9 before:w-px before:bg-ink">
           gossamer
         </span>
 
         {/* The title and the worry share the middle, in the same face; one fades into the other. */}
         <div className="absolute inset-0 grid place-items-center px-16 text-center">
-          <motion.h1
-            className="col-start-1 row-start-1 max-w-[8em] font-hand text-display font-light"
-            style={{ opacity: titleOpacity }}
-          >
+          <motion.h1 className="col-start-1 row-start-1 max-w-[8em] font-hand text-display" style={{ opacity: titleOpacity }}>
             leave what’s heavy here.
           </motion.h1>
-          <motion.p
-            className="col-start-1 row-start-1 max-w-[8em] font-hand text-display font-light"
-            style={{ opacity: worryOpacity }}
-          >
+          <motion.p className="col-start-1 row-start-1 max-w-[8em] font-hand text-display" style={{ opacity: worryOpacity }}>
             {WORRY}
           </motion.p>
         </div>
 
-        {/* Captions sit inside the ring, just under the two lines of handwriting. */}
+        {/* Captions sit just under the two lines in the middle. */}
         <div className="absolute inset-x-0 top-1/2 mt-[calc(var(--text-display)*1.25+0.6rem)] h-6">
           {CAPTIONS.map((caption) => (
             <Caption key={caption.text} {...caption} progress={progress} />
@@ -237,22 +251,18 @@ export default function Home() {
           aria-hidden="true"
         />
 
-        <footer className="absolute inset-x-6 bottom-5 flex justify-between gap-4 text-sm text-ink-soft">
+        <footer className="absolute inset-x-6 bottom-5 flex justify-between gap-4 text-sm font-medium text-ink-soft">
           <a
             href="https://findahelpline.com"
             target="_blank"
             rel="noreferrer"
-            className="px-1 underline decoration-1 underline-offset-4 paper"
+            className="underline decoration-1 underline-offset-4"
           >
             need to talk to someone now?
           </a>
-          {import.meta.env.DEV && (
-            <span className="px-1 paper">
-              <ApiStatus />
-            </span>
-          )}
+          {import.meta.env.DEV && <ApiStatus />}
         </footer>
-      </div>
+      </motion.div>
     </div>
   );
 }

@@ -10,8 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fontsource/bellota": "^5.3.0",
-    "@fontsource/bellota-text": "^5.3.0",
+    "@fontsource-variable/quicksand": "^5.3.0",
     "motion": "^14.14.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
