@@ -49,9 +49,27 @@
   --mottle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1100' height='1100'%3E%3Cfilter id='a' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.003' numOctaves='2' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .5 0 0 0 -.2'/%3E%3C/filter%3E%3Cfilter id='b' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.003' numOctaves='2' seed='23' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 .35 0 0 0 -.14'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23a)'/%3E%3Crect width='100%25' height='100%25' filter='url(%23b)'/%3E%3C/svg%3E");
 }
 
-/* The cloth texture, to lay over any flat colour. The colour underneath can
-   change (or animate) freely; the texture is only light and dark specks. */
-@utility fabric {
+/* The visitor's chosen background (see theme.ts): a cloth colour, and
+   optionally a faint woven texture over it. */
+:root {
+  --cloth: var(--color-denim);
+}
+:root[data-cloth='suede'] {
+  --cloth: var(--color-suede);
+}
+:root[data-cloth='olive'] {
+  --cloth: var(--color-olive);
+}
+
+/* The texture is only light and dark specks, so it works over any of the colours.
+   It sits behind all content and never scrolls. */
+:root[data-texture='on'] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.5;
   background-image: var(--nap), var(--weave), var(--mottle);
   background-size:
     200px,
@@ -66,7 +84,7 @@
     font-family: var(--font-body);
     font-size: 1.0625rem;
     line-height: 1.6;
-    background-color: var(--color-denim);
+    background-color: var(--cloth);
     -webkit-font-smoothing: antialiased;
   }
 

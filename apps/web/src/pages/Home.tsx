@@ -2,6 +2,7 @@ import { useMemo, useRef } from 'react';
 import { motion, useScroll, useTransform, type MotionValue } from 'motion/react';
 import ApiStatus from '../components/ApiStatus';
 import OrbitSpider, { ringPoint } from '../components/OrbitSpider';
+import ThemePicker from '../components/ThemePicker';
 import { useElementSize } from '../hooks/useElementSize';
 import { useFontReady } from '../hooks/useFontReady';
 
@@ -9,7 +10,6 @@ import { useFontReady } from '../hooks/useFontReady';
 //   the title, circled by the spider
 //   -> the title becomes someone's worry
 //   -> kind replies arrive, and each sentence IS a thread
-// The cloth behind it changes with each beat: denim, then suede, then olive.
 // Three short captions are the only explanation.
 
 const FONT = 'Quicksand Variable';
@@ -27,8 +27,8 @@ const WORRY = 'my cat died this morning';
 //         thread (marked below), never in mid-air.
 const REPLIES = [
   { text: 'he will always be with you', wide: -158, narrow: [0, 0.335, 1, 0.285] },
-  { text: 'i’m so sorry', wide: -80, narrow: [0.62, 0, 1, 0.115] }, // across the top-right corner
-  { text: 'he knew he was loved', wide: 55, narrow: [0, 0.13, 0.7, 0.3] }, // ends on the first thread
+  { text: 'i’m so sorry', wide: -80, narrow: [1, 0.12, 0.78, 0.296] }, // ends on the first thread
+  { text: 'he knew he was loved', wide: 55, narrow: [0, 0.13, 0.45, 0.3125] }, // ends on the first thread
   { text: 'thinking of you tonight', wide: -22, narrow: [0, 0.665, 1, 0.72] },
   { text: 'you’re not alone', wide: 128, narrow: [1, 0.87, 0.52, 0.694] }, // ends on the thread above it
 ] as const;
@@ -45,9 +45,6 @@ const CAPTIONS = [
 ];
 // Scrolling hurries the spider, so its ring is finished before the first reply needs it.
 const RING_DONE_BY = [0.06, 0.34];
-// The cloth: denim under the title, suede under the worry, olive once replies arrive.
-const CLOTH_AT = [0.06, 0.2, 0.3, 0.44];
-const CLOTH = ['#54708a', '#5a4d43', '#5a4d43', '#6b6a40'];
 
 type Point = { x: number; y: number };
 
@@ -187,7 +184,6 @@ export default function Home() {
   const worryOpacity = useTransform(progress, WORRY_IN, [0, 1]);
   const hintOpacity = useTransform(progress, [0, 0.04], [1, 0]);
   const lead = useTransform(progress, RING_DONE_BY, [0, 2 * Math.PI]);
-  const cloth = useTransform(progress, CLOTH_AT, CLOTH);
 
   // The loop the spider walks: roomy enough to hold two lines of title and a caption.
   // On wide screens it leaves a ring of silk for the replies to hang from; on a
@@ -201,9 +197,7 @@ export default function Home() {
   return (
     // Tall, so there is distance to scroll; the stage inside stays pinned to the screen.
     <div ref={scene} className="h-[450vh]">
-      <motion.div ref={stage} className="sticky top-0 h-dvh overflow-hidden" style={{ backgroundColor: cloth }}>
-        <div className="absolute inset-0 fabric" aria-hidden="true" />
-
+      <div ref={stage} className="sticky top-0 h-dvh overflow-hidden">
         {width > 0 && (
           <svg className="pointer-events-none absolute inset-0 h-full w-full">
             {threads.map((thread, i) => (
@@ -226,6 +220,8 @@ export default function Home() {
         <span className="absolute top-8 left-6 px-1 font-hand text-lg leading-none tracking-[0.18em] before:absolute before:bottom-full before:left-2 before:mb-1 before:h-9 before:w-px before:bg-ink">
           gossamer
         </span>
+
+        <ThemePicker className="absolute top-7 right-6" />
 
         {/* The title and the worry share the middle, in the same face; one fades into the other. */}
         <div className="absolute inset-0 grid place-items-center px-16 text-center">
@@ -262,7 +258,7 @@ export default function Home() {
           </a>
           {import.meta.env.DEV && <ApiStatus />}
         </footer>
-      </motion.div>
+      </div>
     </div>
   );
 }

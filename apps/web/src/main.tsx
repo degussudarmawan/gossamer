@@ -6,6 +6,10 @@ import { MotionConfig } from 'motion/react';
 import '@fontsource-variable/quicksand';
 import './styles/index.css';
 import App from './App';
+import { applyTheme, loadTheme } from './theme';
+
+// before the first paint, so the page never flashes the wrong background
+applyTheme(loadTheme());
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
