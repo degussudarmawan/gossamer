@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { motion, useScroll, useTransform, type MotionValue } from 'motion/react';
 import ApiStatus from '../components/ApiStatus';
 import OrbitSpider, { ringPoint } from '../components/OrbitSpider';
@@ -9,7 +9,8 @@ import { useFontReady } from '../hooks/useFontReady';
 // The landing page is one pinned scene that scrolling plays through:
 //   the title, circled by the spider
 //   -> the title becomes someone's worry
-//   -> kind replies arrive, and each sentence IS a thread
+//   -> kind replies arrive, and each sentence IS a thread: the spider leaves
+//      its loop and writes each one, the letters appearing behind it
 // Three short captions are the only explanation.
 
 const FONT = 'Quicksand Variable';
@@ -22,9 +23,8 @@ const WORRY = 'my cat died this morning';
 //         long diagonals.
 // narrow: on a phone there is no ring and no room for steep text, so threads
 //         are strung nearly level across the screen, clear of the middle.
-//         [x1, y1, x2, y2] as fractions of the screen, spun from the first
-//         point to the second. Every end is on a screen edge or on an earlier
-//         thread (marked below), never in mid-air.
+//         [x1, y1, x2, y2] as fractions of the screen. Every end is on a
+//         screen edge or on an earlier thread (marked below), never in mid-air.
 const REPLIES = [
   { text: 'he will always be with you', wide: -158, narrow: [0, 0.335, 1, 0.285] },
   { text: 'i’m so sorry', wide: -80, narrow: [1, 0.12, 0.78, 0.296] }, // ends on the first thread
@@ -34,26 +34,38 @@ const REPLIES = [
 ] as const;
 
 // Scroll progress (0 to 1) at which things happen.
-const TITLE_OUT = [0.06, 0.16];
-const WORRY_IN = [0.14, 0.24];
-const FIRST_REPLY = 0.36;
-const REPLY_GAP = 0.095;
+const TITLE_OUT = [0.05, 0.12];
+const WORRY_IN = [0.11, 0.18];
+// Scrolling hurries the spider, so its ring is finished before it leaves to write.
+const RING_DONE_BY = [0.05, 0.24];
+// The spider leaves its loop and walks to where the first reply starts...
+const SET_OUT = 0.25;
+// ...then for each reply: writes it (WRITE), and walks to where the next one starts.
+const FIRST_REPLY = 0.3;
+const REPLY_GAP = 0.12;
+const WRITE = 0.075;
+// After the last reply it walks home to its loop.
+const HOME_BY = FIRST_REPLY + (REPLIES.length - 1) * REPLY_GAP + WRITE + 0.06;
 const CAPTIONS = [
-  { text: 'someone leaves a worry.', fade: [0.16, 0.22, 0.3, 0.35], to: [0, 1, 1, 0] },
-  { text: 'strangers answer.', fade: [0.36, 0.42, 0.78, 0.83], to: [0, 1, 1, 0] },
-  { text: 'every kind word spins a thread.', fade: [0.84, 0.9], to: [0, 1] },
+  { text: 'someone leaves a worry.', fade: [0.12, 0.17, 0.24, 0.28], to: [0, 1, 1, 0] },
+  { text: 'strangers answer.', fade: [0.3, 0.34, 0.82, 0.86], to: [0, 1, 1, 0] },
+  { text: 'every kind word spins a thread.', fade: [0.88, 0.93], to: [0, 1] },
 ];
-// Scrolling hurries the spider, so its ring is finished before the first reply needs it.
-const RING_DONE_BY = [0.06, 0.34];
 
 type Point = { x: number; y: number };
 
+const lerp = (p: Point, q: Point, u: number): Point => ({ x: p.x + (q.x - p.x) * u, y: p.y + (q.y - p.y) * u });
+const smooth = (u: number) => u * u * (3 - 2 * u);
+const along = (range: [number, number], p: number) => Math.min(1, Math.max(0, (p - range[0]) / (range[1] - range[0])));
+
 type Thread = {
   text: string;
-  /** The path the words are written along, always running left to right so they read upright. */
-  reads: string;
-  /** The same path from its first anchor to its second: the direction the thread is spun in. */
-  spun: string;
+  /** Where it is written from (the left end), where to, and the control point of the sag between. */
+  a: Point;
+  b: Point;
+  c: Point;
+  /** The same curve as an SVG path. */
+  d: string;
   length: number;
   size: number;
 };
@@ -104,8 +116,9 @@ function buildThreads(width: number, height: number, rx: number, ry: number): Th
     const length = span - insetA - insetB;
     const sag = length * (wide ? 0.035 : 0.02) * (i % 2 ? 1 : -1);
     const c = { x: (a.x + b.x) / 2 - dir.y * sag, y: (a.y + b.y) / 2 + dir.x * sag };
-    const curve = (p: Point, q: Point) =>
-      `M${p.x.toFixed(1)} ${p.y.toFixed(1)}Q${c.x.toFixed(1)} ${c.y.toFixed(1)} ${q.x.toFixed(1)} ${q.y.toFixed(1)}`;
+    // Always written left to right, so the words read upright and appear in
+    // reading order as the spider walks. Either end is a solid anchor to start from.
+    if (a.x > b.x) [a, b] = [b, a];
 
     // Size the sentence to fill the thread with barely open spacing, within a
     // narrow range of sizes.
@@ -116,16 +129,41 @@ function buildThreads(width: number, height: number, rx: number, ry: number): Th
 
     return {
       text: Array(times).fill(reply.text).join('   ·   '),
-      reads: dir.x >= 0 ? curve(a, b) : curve(b, a),
-      spun: curve(a, b),
+      a,
+      b,
+      c,
+      d: `M${a.x.toFixed(1)} ${a.y.toFixed(1)}Q${c.x.toFixed(1)} ${c.y.toFixed(1)} ${b.x.toFixed(1)} ${b.y.toFixed(1)}`,
       length,
       size,
     };
   });
 }
 
+// Where the spider is on the screen at a given scroll position, given where its
+// loop would otherwise have it. It leaves the loop, writes each reply (it is the
+// tip of the sentence as the letters appear), walks to the start of the next,
+// and finally goes home.
+function spiderAt(p: number, onLoop: Point, threads: Thread[]): Point {
+  const first = threads[0];
+  const final = threads[threads.length - 1];
+  if (!first || !final || p <= SET_OUT || p >= HOME_BY) return onLoop;
+  if (p < FIRST_REPLY) return lerp(onLoop, first.a, smooth(along([SET_OUT, FIRST_REPLY], p)));
+
+  const i = Math.min(threads.length - 1, Math.floor((p - FIRST_REPLY) / REPLY_GAP));
+  const thread = threads[i]!;
+  const start = FIRST_REPLY + i * REPLY_GAP;
+  if (p <= start + WRITE) {
+    // a point on the sagging thread: the same curve the words are written along
+    const u = along([start, start + WRITE], p);
+    return lerp(lerp(thread.a, thread.c, u), lerp(thread.c, thread.b, u), u);
+  }
+  const next = threads[i + 1];
+  if (next) return lerp(thread.b, next.a, smooth(along([start + WRITE, start + REPLY_GAP], p)));
+  return lerp(final.b, onLoop, smooth(along([start + WRITE, HOME_BY], p)));
+}
+
 // One reply: a sentence written along its thread, revealed from its first
-// anchor onward as if it were being spun.
+// anchor onward as the spider walks it.
 function WordThread({
   id,
   thread,
@@ -137,13 +175,13 @@ function WordThread({
   at: number;
   progress: MotionValue<number>;
 }) {
-  const pathLength = useTransform(progress, [at, at + 0.1], [0, 1]);
+  const pathLength = useTransform(progress, [at, at + WRITE], [0, 1]);
   return (
     <>
       <defs>
-        <path id={`${id}-path`} d={thread.reads} />
+        <path id={`${id}-path`} d={thread.d} />
         <mask id={`${id}-mask`} maskUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%">
-          <motion.path d={thread.spun} fill="none" stroke="white" strokeWidth={thread.size * 2.4} style={{ pathLength }} />
+          <motion.path d={thread.d} fill="none" stroke="white" strokeWidth={thread.size * 2.4} style={{ pathLength }} />
         </mask>
       </defs>
       <text className="fill-ink font-hand" fontSize={thread.size} mask={`url(#${id}-mask)`} dy="0.3em">
@@ -194,9 +232,22 @@ export default function Home() {
   // fontReady is a dependency because sentence widths are measured in the real font
   const threads = useMemo(() => buildThreads(width, height, rx, ry), [width, height, rx, ry, fontReady]);
 
+  // The spider is drawn in a group centred on the screen (and shrunk on phones),
+  // while threads are in screen pixels, so convert on the way in and out.
+  const scale = wide ? 1 : 0.75;
+  const errand = useCallback(
+    (onLoop: Point): Point => {
+      const cx = width / 2;
+      const cy = height / 2;
+      const at = spiderAt(progress.get(), { x: cx + onLoop.x * scale, y: cy + onLoop.y * scale }, threads);
+      return { x: (at.x - cx) / scale, y: (at.y - cy) / scale };
+    },
+    [progress, threads, width, height, scale],
+  );
+
   return (
     // Tall, so there is distance to scroll; the stage inside stays pinned to the screen.
-    <div ref={scene} className="h-[450vh]">
+    <div ref={scene} className="h-[600vh]">
       <div ref={stage} className="sticky top-0 h-dvh overflow-hidden">
         {width > 0 && (
           <svg className="pointer-events-none absolute inset-0 h-full w-full">
@@ -209,9 +260,9 @@ export default function Home() {
                 progress={progress}
               />
             ))}
-            <g transform={`translate(${width / 2} ${height / 2}) scale(${wide ? 1 : 0.75})`} aria-hidden="true">
+            <g transform={`translate(${width / 2} ${height / 2}) scale(${scale})`} aria-hidden="true">
               {/* the group is scaled down on phones, so the loop is scaled up to stay the same size */}
-              <OrbitSpider rx={wide ? rx : rx / 0.75} ry={wide ? ry : ry / 0.75} lead={lead} trail={wide} />
+              <OrbitSpider rx={rx / scale} ry={ry / scale} lead={lead} trail={wide} errand={errand} />
             </g>
           </svg>
         )}
