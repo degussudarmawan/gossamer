@@ -221,10 +221,11 @@ export default function Home() {
           gossamer
         </span>
 
-        <ThemePicker className="absolute top-7 right-6" />
+        <ThemePicker className="absolute top-7 right-6 z-10" />
 
-        {/* The title and the worry share the middle, in the same face; one fades into the other. */}
-        <div className="absolute inset-0 grid place-items-center px-16 text-center">
+        {/* The title and the worry share the middle, in the same face; one fades into the other.
+            This layer covers the whole screen, so it must let clicks through to what's beneath. */}
+        <div className="pointer-events-none absolute inset-0 grid place-items-center px-16 text-center">
           <motion.h1 className="col-start-1 row-start-1 max-w-[8em] font-hand text-display" style={{ opacity: titleOpacity }}>
             leave what’s heavy here.
           </motion.h1>
@@ -234,7 +235,7 @@ export default function Home() {
         </div>
 
         {/* Captions sit just under the two lines in the middle. */}
-        <div className="absolute inset-x-0 top-1/2 mt-[calc(var(--text-display)*1.25+0.6rem)] h-6">
+        <div className="pointer-events-none absolute inset-x-0 top-1/2 mt-[calc(var(--text-display)*1.25+0.6rem)] h-6">
           {CAPTIONS.map((caption) => (
             <Caption key={caption.text} {...caption} progress={progress} />
           ))}
