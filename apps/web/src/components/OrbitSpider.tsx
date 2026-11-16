@@ -31,9 +31,11 @@ type Props = {
   ry: number;
   /** Extra distance (radians) added to the walk, e.g. driven by scroll so the ring is finished on cue. */
   lead?: MotionValue<number>;
+  /** Whether the spider leaves silk behind it. Off, it just paces its loop. */
+  trail?: boolean;
 };
 
-export default function OrbitSpider({ rx, ry, lead }: Props) {
+export default function OrbitSpider({ rx, ry, lead, trail = true }: Props) {
   const spider = useRef<SVGGElement>(null);
   const silk = useRef<SVGPathElement>(null);
   const still = useReducedMotion();
@@ -67,7 +69,7 @@ export default function OrbitSpider({ rx, ry, lead }: Props) {
         <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" seed="4" result="noise" />
         <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.6" />
       </filter>
-      <path ref={silk} fill="none" strokeWidth={1.2} />
+      {trail && <path ref={silk} fill="none" strokeWidth={1.2} />}
       <g ref={spider}>
         {/* drawn head-up around its own middle; alternate legs step in turn */}
         <g transform="translate(0 -9)">

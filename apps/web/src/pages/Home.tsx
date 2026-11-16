@@ -13,15 +13,23 @@ import { useElementSize } from '../hooks/useElementSize';
 
 const WORRY = 'my cat died this morning';
 
-// Each reply and the direction its thread leaves the ring, in degrees
-// (0 = right, 90 = down). Long sentences get the long diagonals.
+// Each reply's thread, laid out twice.
+//
+// wide:   the direction it leaves the spider's ring, in degrees (0 = right,
+//         90 = down), running out to the screen edge. Long sentences get the
+//         long diagonals.
+// narrow: on a phone there is no ring and no room for steep text, so threads
+//         are strung nearly level across the screen, clear of the middle.
+//         [x1, y1, x2, y2] as fractions of the screen, spun from the first
+//         point to the second. Every end is on a screen edge or on an earlier
+//         thread (marked below), never in mid-air.
 const REPLIES = [
-  { text: 'he will always be with you', wide: -158, narrow: -96 },
-  { text: 'i’m so sorry', wide: -80, narrow: -52 },
-  { text: 'thinking of you tonight', wide: -22, narrow: 62 },
-  { text: 'he knew he was loved', wide: 55, narrow: 83 },
-  { text: 'you’re not alone', wide: 128, narrow: 118 },
-];
+  { text: 'he will always be with you', wide: -158, narrow: [0, 0.335, 1, 0.285] },
+  { text: 'i’m so sorry', wide: -80, narrow: [0.62, 0, 1, 0.115] }, // across the top-right corner
+  { text: 'he knew he was loved', wide: 55, narrow: [0, 0.13, 0.7, 0.3] }, // ends on the first thread
+  { text: 'thinking of you tonight', wide: -22, narrow: [0, 0.665, 1, 0.72] },
+  { text: 'you’re not alone', wide: 128, narrow: [1, 0.87, 0.52, 0.694] }, // ends on the thread above it
+] as const;
 
 // Scroll progress (0 to 1) at which things happen.
 const TITLE_OUT = [0.06, 0.16];
@@ -46,32 +54,50 @@ type Thread = {
   size: number;
 };
 
-// A thread starts just off the ring and ends at the edge of the screen, sagging
-// slightly. Its sentence is sized and spaced to span the whole thing.
+export const isWide = (width: number) => width >= 1024;
+
+// A thread sags slightly between its two ends, and its sentence is sized and
+// spaced to span the whole thing.
 function buildThreads(width: number, height: number, rx: number, ry: number): Thread[] {
   const cx = width / 2;
   const cy = height / 2;
-  const wide = width >= 1024;
+  const wide = isWide(width);
 
   return REPLIES.map((reply, i) => {
-    const angle = ((wide ? reply.wide : reply.narrow) * Math.PI) / 180;
-    const dir = { x: Math.cos(angle), y: Math.sin(angle) };
-    const ring = ringPoint(Math.atan2(dir.y / ry, dir.x / rx), rx, ry);
-    const from = Math.hypot(ring.x, ring.y) + 10;
-    // stops a little short of the edge so the last letter isn't cut off
-    const to = Math.min(cx / Math.abs(dir.x || 1e-9), cy / Math.abs(dir.y || 1e-9)) - 18;
-
-    const a = { x: cx + dir.x * from, y: cy + dir.y * from };
-    const b = { x: cx + dir.x * to, y: cy + dir.y * to };
-    const length = to - from;
-    const sag = length * 0.035 * (i % 2 ? 1 : -1);
+    let a: { x: number; y: number };
+    let b: { x: number; y: number };
+    if (wide) {
+      const angle = (reply.wide * Math.PI) / 180;
+      const dir = { x: Math.cos(angle), y: Math.sin(angle) };
+      const ring = ringPoint(Math.atan2(dir.y / ry, dir.x / rx), rx, ry);
+      const from = Math.hypot(ring.x, ring.y);
+      const to = Math.min(cx / Math.abs(dir.x || 1e-9), cy / Math.abs(dir.y || 1e-9));
+      a = { x: cx + dir.x * from, y: cy + dir.y * from };
+      b = { x: cx + dir.x * to, y: cy + dir.y * to };
+    } else {
+      const [x1, y1, x2, y2] = reply.narrow;
+      a = { x: x1 * width, y: y1 * height };
+      b = { x: x2 * width, y: y2 * height };
+    }
+    // The words stop short of each anchor: a little at a screen edge so no letter
+    // is cut off, more where the anchor is another sentence so the two don't collide.
+    const span = Math.hypot(b.x - a.x, b.y - a.y);
+    const dir = { x: (b.x - a.x) / span, y: (b.y - a.y) / span };
+    const onEdge = (p: typeof a) =>
+      wide || p.x < 1 || p.y < 1 || p.x > width - 1 || p.y > height - 1;
+    const insetA = onEdge(a) ? 14 : 34;
+    const insetB = onEdge(b) ? 14 : 34;
+    a = { x: a.x + dir.x * insetA, y: a.y + dir.y * insetA };
+    b = { x: b.x - dir.x * insetB, y: b.y - dir.y * insetB };
+    const length = span - insetA - insetB;
+    const sag = length * (wide ? 0.035 : 0.02) * (i % 2 ? 1 : -1);
     const c = { x: (a.x + b.x) / 2 - dir.y * sag, y: (a.y + b.y) / 2 + dir.x * sag };
     const curve = (p: typeof a, q: typeof a) =>
       `M${p.x.toFixed(1)} ${p.y.toFixed(1)}Q${c.x.toFixed(1)} ${c.y.toFixed(1)} ${q.x.toFixed(1)} ${q.y.toFixed(1)}`;
 
     // Letters average about 0.46em wide. Aim for the sentence to fill the thread
     // with barely open spacing, within a narrow range of sizes.
-    const size = Math.max(wide ? 20 : 17, Math.min(wide ? 32 : 24, length / (reply.text.length * 0.46 * 1.05)));
+    const size = Math.max(wide ? 20 : 15, Math.min(wide ? 32 : 21, length / (reply.text.length * 0.46 * 1.05)));
     // A short sentence on a long thread is written again instead of being stretched thin.
     const natural = reply.text.length * 0.46 * size;
     const times = Math.max(1, Math.round(length / (natural * 1.3)));
@@ -146,9 +172,12 @@ export default function Home() {
   const hintOpacity = useTransform(progress, [0, 0.04], [1, 0]);
   const lead = useTransform(progress, RING_DONE_BY, [0, 2 * Math.PI]);
 
-  // The ring the spider walks: roomy enough to hold two lines of title and a caption.
+  // The loop the spider walks: roomy enough to hold two lines of title and a caption.
+  // On wide screens it leaves a ring of silk for the replies to hang from; on a
+  // phone the ring would crowd the words, so the spider just paces around them.
+  const wide = isWide(width);
   const rx = Math.min(width * 0.4, 250);
-  const ry = Math.min(height * 0.16, 125);
+  const ry = wide ? Math.min(height * 0.16, 125) : Math.min(height * 0.11, 95);
   const threads = useMemo(() => buildThreads(width, height, rx, ry), [width, height, rx, ry]);
 
   return (
@@ -166,8 +195,9 @@ export default function Home() {
                 progress={progress}
               />
             ))}
-            <g transform={`translate(${width / 2} ${height / 2})`} aria-hidden="true">
-              <OrbitSpider rx={rx} ry={ry} lead={lead} />
+            <g transform={`translate(${width / 2} ${height / 2}) scale(${wide ? 1 : 0.75})`} aria-hidden="true">
+              {/* the group is scaled down on phones, so the loop is scaled up to stay the same size */}
+              <OrbitSpider rx={wide ? rx : rx / 0.75} ry={wide ? ry : ry / 0.75} lead={lead} trail={wide} />
             </g>
           </svg>
         )}
@@ -178,7 +208,7 @@ export default function Home() {
         </span>
 
         {/* The title and the worry share the middle, in the same face; one fades into the other. */}
-        <div className="absolute inset-0 grid place-items-center px-6 text-center">
+        <div className="absolute inset-0 grid place-items-center px-16 text-center">
           <motion.h1
             className="col-start-1 row-start-1 max-w-[8em] font-hand text-display font-light"
             style={{ opacity: titleOpacity }}
@@ -200,9 +230,9 @@ export default function Home() {
           ))}
         </div>
 
-        {/* A short strand hanging at the bottom edge: "there is more below". */}
+        {/* A short strand near the bottom: "there is more below". On phones it sits above the help link. */}
         <motion.div
-          className="absolute bottom-0 left-1/2 h-14 w-px animate-pulse bg-ink-soft"
+          className="absolute bottom-14 left-1/2 h-10 w-px animate-pulse bg-ink-soft lg:bottom-0 lg:h-14"
           style={{ opacity: hintOpacity }}
           aria-hidden="true"
         />
