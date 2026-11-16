@@ -1,0 +1,101 @@
+@import 'tailwindcss';
+
+/* Design tokens. Tailwind turns each one into utilities (bg-paper, text-ink-soft,
+   font-hand, animate-sway…), so the look is tuned here and nowhere else.
+   Rationale lives in docs/DESIGN.md. */
+@theme {
+  /* Tailwind's stock palette is switched off: only brand colours exist. */
+  --color-*: initial;
+
+  /* Paper and ink: taken from the reference drawing. Warm, low contrast, no pure white or black. */
+  --color-paper: #ece9e4;
+  --color-paper-raised: #f5f3ef;
+  --color-ink: #2b2b2b;
+  --color-ink-soft: #5d5a55; /* 5.6:1 on paper: body-safe */
+  --color-ink-faint: #8f8b84; /* decoration only, never text that must be read */
+  --color-line: rgb(43 43 43 / 0.14);
+
+  /* One quiet accent. Sage reads as calm; there is deliberately no red anywhere. */
+  --color-accent: #4f6b5c;
+  --color-accent-soft: rgb(79 107 92 / 0.12);
+
+  /* One family, two cuts. Bellota is a light, upright face with small soft
+     curls on a few letters: cosy without being a script. It carries the title,
+     the wordmark and every word people write to each other. Bellota Text is
+     its plainer sibling for small interface text. */
+  --font-hand: 'Bellota', system-ui, sans-serif;
+  --font-body: 'Bellota Text', system-ui, sans-serif;
+
+  --text-display: clamp(1.75rem, 1.25rem + 2vw, 2.75rem);
+  --text-display--line-height: 1.25;
+
+  --radius-card: 14px;
+  --container-measure: 34rem; /* comfortable line length */
+
+  /* Slow on purpose: nothing here should startle. */
+  --ease-gentle: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* The spider's walk: two sets of legs swinging in opposite phase. */
+  --animate-step-a: step 0.55s ease-in-out infinite alternate;
+  --animate-step-b: step 0.55s ease-in-out infinite alternate-reverse;
+
+  @keyframes step {
+    from {
+      transform: rotate(-5deg);
+    }
+    to {
+      transform: rotate(5deg);
+    }
+  }
+}
+
+:root {
+  /* faint paper grain, carried over from the prototype */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .17 0 0 0 0 .17 0 0 0 0 .17 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* A patch of the same paper. Put behind words that sit on a thread, so the
+   thread runs up to the words and continues after them instead of striking through. */
+@utility paper {
+  background-color: var(--color-paper);
+  background-image: var(--grain);
+}
+
+@layer base {
+  body {
+    min-height: 100dvh;
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    background-color: var(--color-paper);
+    background-image: var(--grain);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  /* People who ask their device for less motion get none. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
