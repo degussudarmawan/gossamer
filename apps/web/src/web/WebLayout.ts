@@ -81,7 +81,7 @@ const keepClear = (wide: boolean) => ({ top: 84, bottom: wide ? 30 : 104, side: 
  */
 const TYPE = {
   wide: { spoke: { min: 22, max: 30 }, ring: 18, nominal: 26, ringGap: 46, spokeStart: 28, firstRing: 30 },
-  narrow: { spoke: { min: 16, max: 20 }, ring: 14.5, nominal: 18, ringGap: 38, spokeStart: 22, firstRing: 24 },
+  narrow: { spoke: { min: 16, max: 19 }, ring: 13.5, nominal: 18, ringGap: 33, spokeStart: 20, firstRing: 20 },
 };
 /** How far spoke letters may be spread past their natural width to fill the spoke. */
 const SPOKE_SPREAD = 1.8;
@@ -209,7 +209,7 @@ export class WebLayout {
     const clear = keepClear(wide);
     const top = clear.top;
     const bottom = height - clear.bottom;
-    const small = Math.min(width * 0.17, 80);
+    const small = Math.min(width * 0.15, 80);
     return {
       cx: width / 2,
       cy: (top + bottom) / 2,
