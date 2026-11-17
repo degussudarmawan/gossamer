@@ -1,5 +1,6 @@
 import { ApiClient } from './lib/ApiClient';
 import { AuthApi } from './lib/AuthApi';
+import { RoomApi } from './lib/RoomApi';
 import { ThemeStore } from './lib/ThemeStore';
 
 // The app's long-lived objects, built once and shared. Each backend area gets
@@ -7,4 +8,5 @@ import { ThemeStore } from './lib/ThemeStore';
 const http = new ApiClient('/api');
 
 export const authApi = new AuthApi(http);
+export const roomApi = new RoomApi(http);
 export const themeStore = new ThemeStore();
