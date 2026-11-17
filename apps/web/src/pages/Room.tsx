@@ -114,12 +114,13 @@ export default function Room() {
           the web then has the rest of the screen. */}
       <div
         className="pointer-events-none absolute z-10 grid -translate-x-1/2 -translate-y-1/2 justify-items-center gap-4 text-center"
-        style={{ left: hub.cx, top: hub.cy, width: hub.rx * 1.5 }}
+        // on a phone the title keeps clear of the spider pacing the small ring
+        style={{ left: hub.cx, top: hub.cy, width: hub.rx * (wide ? 1.5 : 1.25) }}
       >
         <h1
           className="line-clamp-2 font-hand leading-snug"
           // the landing page's title size, unless a long word needs it smaller to fit the ring
-          style={{ fontSize: WebLayout.titleSize(room.title, hub, wide ? 44 : 22) }}
+          style={{ fontSize: WebLayout.titleSize(room.title, hub, wide ? 44 : 22, wide ? 1.45 : 1.2) }}
         >
           {room.title}
         </h1>

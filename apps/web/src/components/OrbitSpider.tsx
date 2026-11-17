@@ -38,6 +38,8 @@ type Props = {
   trail?: boolean;
   /** 'grows': the ring appears behind the spider over its first lap. 'whole': it is there from the start. */
   ring?: 'grows' | 'whole';
+  /** Size of the spider itself. */
+  glyphScale?: number;
   /**
    * Called every frame with where the spider would be on its loop; returns where
    * it should actually be. Lets the page send it off on errands (writing a
@@ -46,7 +48,7 @@ type Props = {
   errand?: (onLoop: Point) => Point;
 };
 
-export default function OrbitSpider({ rx, ry, lead, trail = true, ring = 'grows', errand }: Props) {
+export default function OrbitSpider({ rx, ry, lead, trail = true, ring = 'grows', glyphScale = 0.72, errand }: Props) {
   const spider = useRef<SVGGElement>(null);
   const silk = useRef<SVGPathElement>(null);
   const last = useRef<{ at: Point; heading: number } | null>(null);
@@ -100,7 +102,7 @@ export default function OrbitSpider({ rx, ry, lead, trail = true, ring = 'grows'
       </filter>
       {trail && <path ref={silk} fill="none" strokeWidth={1} />}
       <g ref={spider}>
-        <g transform="scale(0.72)">
+        <g transform={`scale(${glyphScale})`}>
           <SpiderGlyph walking={!still} />
         </g>
       </g>
