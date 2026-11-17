@@ -36,6 +36,8 @@ type Props = {
   lead?: MotionValue<number>;
   /** Whether the spider leaves silk behind it. Off, it just paces its loop. */
   trail?: boolean;
+  /** 'grows': the ring appears behind the spider over its first lap. 'whole': it is there from the start. */
+  ring?: 'grows' | 'whole';
   /**
    * Called every frame with where the spider would be on its loop; returns where
    * it should actually be. Lets the page send it off on errands (writing a
@@ -44,7 +46,7 @@ type Props = {
   errand?: (onLoop: Point) => Point;
 };
 
-export default function OrbitSpider({ rx, ry, lead, trail = true, errand }: Props) {
+export default function OrbitSpider({ rx, ry, lead, trail = true, ring = 'grows', errand }: Props) {
   const spider = useRef<SVGGElement>(null);
   const silk = useRef<SVGPathElement>(null);
   const last = useRef<{ at: Point; heading: number } | null>(null);
@@ -71,9 +73,10 @@ export default function OrbitSpider({ rx, ry, lead, trail = true, errand }: Prop
         'transform',
         `translate(${p.x.toFixed(2)} ${p.y.toFixed(2)}) rotate(${((heading * 180) / Math.PI + 90).toFixed(1)})`,
       );
-      silk.current?.setAttribute('d', silkPath(Math.max(START, theta - 2 * Math.PI), theta, rx, ry));
+      const lapAgo = theta - 2 * Math.PI;
+      silk.current?.setAttribute('d', silkPath(ring === 'whole' ? lapAgo : Math.max(START, lapAgo), theta, rx, ry));
     },
-    [rx, ry, errand],
+    [rx, ry, errand, ring],
   );
 
   useAnimationFrame((ms) => {
