@@ -24,6 +24,7 @@ export class AuthController {
     private readonly auth: AuthService,
     /** Send the cookie over HTTPS only. On in production, off for local http. */
     private readonly secureCookies: boolean,
+    private readonly signInAllowlist?: string[],
   ) {}
 
   /** The signed-in user for this request, or null. Other controllers will use this too. */
@@ -35,7 +36,9 @@ export class AuthController {
   routes() {
     return new Hono()
       .post('/request-code', body(emailBody), async (c) => {
-        const outcome = await this.auth.requestCode(c.req.valid('json').email);
+        const email = c.req.valid('json').email;
+        if (this.signInAllowlist && !this.signInAllowlist.includes(email.trim().toLowerCase())) return c.json({ ok: true });
+        const outcome = await this.auth.requestCode(email);
         if (outcome === 'too_many') return c.json({ error: 'too_many_requests' }, 429);
         // Same answer whether or not this email has an account: there is nothing to probe.
         return c.json({ ok: true });
@@ -43,6 +46,7 @@ export class AuthController {
 
       .post('/verify-code', body(verifyBody), async (c) => {
         const { email, code } = c.req.valid('json');
+        if (this.signInAllowlist && !this.signInAllowlist.includes(email.trim().toLowerCase())) return c.json({ error: 'invalid_code' }, 401);
         const result = await this.auth.verifyCode(email, code);
         if (!result) return c.json({ error: 'invalid_code' }, 401);
         setCookie(c, AuthController.COOKIE, result.token, {
