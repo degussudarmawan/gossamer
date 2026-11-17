@@ -96,7 +96,7 @@ export default function RoomWeb({ width, height, seed, messages, onPick }: Props
   // fontReady is a dependency because message widths are measured in the real font
   const layout = useMemo(() => new WebLayout(width, height, seed, messages), [width, height, seed, messages, fontReady]);
   const total = layout.threads.length;
-  const { cx, cy, r } = layout.hub;
+  const { cx, cy, rx, ry } = layout.hub;
 
   // `written` counts threads laid down so far: 3.4 means three done and the
   // fourth 40% written. `done` is its whole part, kept in state so React draws
@@ -180,7 +180,7 @@ export default function RoomWeb({ width, height, seed, messages, onPick }: Props
         />
       ))}
       <g transform={`translate(${cx} ${cy})`}>
-        <OrbitSpider rx={r} ry={r} errand={errand} ring="whole" />
+        <OrbitSpider rx={rx} ry={ry} errand={errand} ring="whole" />
       </g>
     </svg>
   );

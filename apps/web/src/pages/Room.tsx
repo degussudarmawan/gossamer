@@ -89,11 +89,12 @@ export default function Room() {
       {/* The title sits inside the hub ring, sized so no word has to break. */}
       <h1
         className="pointer-events-none absolute line-clamp-3 -translate-x-1/2 -translate-y-1/2 text-center font-hand leading-snug"
+        // the landing page's title size, unless a long word needs it smaller to fit the ring
         style={{
           left: hub.cx,
           top: hub.cy,
-          width: hub.r * 1.6,
-          fontSize: WebLayout.titleSize(room.title, hub, width >= 1024 ? 34 : 23),
+          width: hub.rx * 1.5,
+          fontSize: WebLayout.titleSize(room.title, hub, width >= 1024 ? 44 : 22),
         }}
       >
         {room.title}

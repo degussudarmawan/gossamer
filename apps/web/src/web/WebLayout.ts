@@ -1,3 +1,4 @@
+import { ringPoint } from '../components/OrbitSpider';
 import { TextRuler } from '../lib/TextRuler';
 
 // Where every message goes in a room's web. No React in here: given a screen
@@ -36,7 +37,7 @@ export type Thread = {
 };
 
 /** The ring in the middle that holds the room's title. */
-export type Hub = { cx: number; cy: number; r: number };
+export type Hub = { cx: number; cy: number; rx: number; ry: number };
 
 type Msg = { id: string; position: number; body: string };
 
@@ -167,16 +168,22 @@ export class WebLayout {
   static hubFor(width: number, height: number): Hub {
     const top = KEEP_CLEAR.top;
     const bottom = height - KEEP_CLEAR.bottom;
-    return { cx: width / 2, cy: (top + bottom) / 2, r: clamp(Math.min(width, bottom - top) * 0.16, 70, 120) };
+    // The landing page's ring on wide screens. A phone is too narrow for that
+    // and still have silk beside it, so there the ring is small and round.
+    const wide = width >= 1024;
+    const small = Math.min(width * 0.19, 80);
+    return {
+      cx: width / 2,
+      cy: (top + bottom) / 2,
+      rx: wide ? Math.min(width * 0.4, 250) : small,
+      ry: wide ? Math.min(height * 0.18, 145) : small,
+    };
   }
 
-  /**
-   * Letter size for a title so that its longest word fits across the hub.
-   * Never larger than `max`; long single words just get smaller.
-   */
+  /** Letter size for a title so its longest word fits inside the ring, never above `max`. */
   static titleSize(title: string, hub: Hub, max: number): number {
     const widest = Math.max(...title.split(/\s+/).map((word) => rulers.spiral.widthInEms(word)), 0.1);
-    return Math.max(12, Math.min(max, (hub.r * 1.5) / widest));
+    return Math.max(12, Math.min(max, (hub.rx * 1.45) / widest));
   }
 
   constructor(
@@ -191,16 +198,18 @@ export class WebLayout {
     // the web's outline and its radials come from the seed alone
     const rnd = seeded(seed);
     this.wobble = [rnd() * TAU, rnd() * TAU, rnd() * TAU];
-    const count = this.wide ? 12 + Math.floor(rnd() * 4) : 9 + Math.floor(rnd() * 3);
+    // fewer, longer spokes than a dense real web, as in the design study: more room for the silk between them
+    const count = this.wide ? 8 + Math.floor(rnd() * 3) : 7 + Math.floor(rnd() * 2);
     const turn = rnd() * TAU;
     // unevenly spaced, like a hand-built web, but never two radials almost on top of each other
     this.angles = Array.from({ length: count }, (_, i) => turn + ((i + (rnd() - 0.5) * 0.55) / count) * TAU);
-    const { cx, cy, r } = this.hub;
+    const { cx, cy } = this.hub;
     this.radials = this.angles.map((a) => {
       const dir = { x: Math.cos(a), y: Math.sin(a) };
       const out = this.edge(a);
+      const start = this.hubRadius(a) + 3;
       return new Strand([
-        { x: cx + dir.x * (r + 3), y: cy + dir.y * (r + 3) },
+        { x: cx + dir.x * start, y: cy + dir.y * start },
         { x: cx + dir.x * out, y: cy + dir.y * out },
       ]);
     });
@@ -239,63 +248,78 @@ export class WebLayout {
    * looks spun rather than drawn with a compass.
    */
   private edge(angle: number): number {
-    const { cx, cy, r } = this.hub;
+    const { cx, cy } = this.hub;
     const halfWidth = cx - KEEP_CLEAR.side;
     const halfHeight = cy - KEEP_CLEAR.top;
     const c = Math.cos(angle);
     const s = Math.sin(angle);
-    const ex = Math.min(halfWidth, halfHeight * 1.9);
-    const oval = 1 / Math.hypot(c / ex, s / halfHeight);
+    // the whole free screen, as on the landing page, where strands run right out to the edges
+    const oval = 1 / Math.hypot(c / halfWidth, s / halfHeight);
     const [p1, p2, p3] = this.wobble;
     const uneven = 1 + 0.06 * Math.sin(2 * angle + p1) + 0.045 * Math.sin(3 * angle + p2) + 0.03 * Math.sin(5 * angle + p3);
     const box = Math.min(halfWidth / Math.abs(c || 1e-9), halfHeight / Math.abs(s || 1e-9));
-    return Math.max(r + 40, Math.min(oval * uneven, box));
+    return Math.max(this.hubRadius(angle) + 40, Math.min(oval * uneven, box));
+  }
+
+  /** Distance from the centre to the drawn hub ring in a direction. */
+  private hubRadius(angle: number): number {
+    const { rx, ry } = this.hub;
+    const p = ringPoint(Math.atan2(Math.sin(angle) / ry, Math.cos(angle) / rx), rx, ry);
+    return Math.hypot(p.x, p.y);
   }
 
   /**
    * The spiral for a given letter size: one strand winding outward from just
-   * outside the hub, crossing every radial on every turn. Turns are spaced far
-   * enough apart for a line of words, a little unevenly. Between radials each
-   * stretch sags toward the hub, by a slightly different amount each time.
+   * outside the hub, crossing every radial on every turn. Turns are spaced
+   * generously, a little unevenly. Between radials each stretch curves round
+   * the hub like a ring of the web, then sags a little, by a different amount
+   * each time, so no two stretches have quite the same curve.
    */
   private spiral(size: number): { strand: Strand; crossings: Crossing[] } {
     const rnd = seeded(this.seed ^ 0x2545f491);
-    const { cx, cy, r } = this.hub;
+    const { cx, cy } = this.hub;
     const count = this.angles.length;
-    const span = this.angles.map((a) => this.edge(a) - r); // hub ring to edge, per radial
+    const span = this.angles.map((a) => this.edge(a) - this.hubRadius(a)); // hub ring to edge, per radial
     const tightest = Math.min(...span);
 
     // Work in fractions of each radial's length, so the spiral takes the web's oval shape.
-    const newGap = () => (size * (2.3 + rnd() * 0.8)) / tightest;
+    const newGap = () => (size * (2.7 + rnd() * 0.9)) / tightest;
     const last = 1 - (size * 1.1) / tightest;
-    let u = (size * 2.2) / tightest; // the open ring between hub and spiral that real webs have
+    let u = (size * 2.6) / tightest; // the open ring between hub and spiral that real webs have
     let gap = newGap();
     const first = Math.floor(rnd() * count);
 
-    const marks: { radial: number; at: Point; reach: number }[] = [];
+    const marks: { radial: number; angle: number; u: number; at: Point; reach: number }[] = [];
     for (let k = 0; ; k++) {
       const j = (first + k) % count;
       if (k > 0 && j === first) gap = newGap(); // each turn gets its own spacing
       const here = u + (rnd() - 0.5) * 0.16 * gap;
       if (here > last) break;
-      const a = this.angles[j]!;
-      const out = r + span[j]! * here;
-      marks.push({ radial: j, at: { x: cx + Math.cos(a) * out, y: cy + Math.sin(a) * out }, reach: out - r - 3 });
+      const a = this.angles[j]! + TAU * Math.floor((first + k) / count); // keeps increasing round the turns
+      const hub = this.hubRadius(a);
+      const out = hub + span[j]! * here;
+      marks.push({ radial: j, angle: a, u: here, at: { x: cx + Math.cos(a) * out, y: cy + Math.sin(a) * out }, reach: out - hub - 3 });
       const next = this.angles[(j + 1) % count]! + (j + 1 === count ? TAU : 0);
-      u += gap * ((next - a) / TAU);
+      u += gap * ((next - this.angles[j]!) / TAU);
     }
 
     const points: Point[] = marks.length ? [marks[0]!.at] : [];
     const markIndex = [0];
     for (let k = 1; k < marks.length; k++) {
-      const p = marks[k - 1]!.at;
-      const q = marks[k]!.at;
-      const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
-      const inward = { x: cx - mid.x, y: cy - mid.y };
-      const toward = Math.hypot(inward.x, inward.y) || 1;
-      const sag = distance(p, q) * (0.035 + rnd() * 0.05);
-      // a quadratic curve whose middle sits `sag` closer to the hub than the straight line
-      const ctrl = { x: mid.x + (inward.x / toward) * sag * 2, y: mid.y + (inward.y / toward) * sag * 2 };
+      const from = marks[k - 1]!;
+      const to = marks[k]!;
+      const p = from.at;
+      const q = to.at;
+      const chord = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+      // where the ring of the web would pass, halfway round between the two radials
+      const midAngle = (from.angle + to.angle) / 2;
+      const ringOut = this.hubRadius(midAngle) + (this.edge(midAngle) - this.hubRadius(midAngle)) * ((from.u + to.u) / 2);
+      const onRing = { x: cx + Math.cos(midAngle) * ringOut, y: cy + Math.sin(midAngle) * ringOut };
+      // the silk sags from that ring part of the way toward the straight line
+      const slack = 0.15 + rnd() * 0.35;
+      const middle = { x: onRing.x + (chord.x - onRing.x) * slack, y: onRing.y + (chord.y - onRing.y) * slack };
+      // a quadratic curve through p and q whose midpoint is `middle`
+      const ctrl = { x: 2 * middle.x - chord.x, y: 2 * middle.y - chord.y };
       const steps = Math.max(4, Math.ceil(distance(p, q) / 5));
       for (let i = 1; i <= steps; i++) {
         const t = i / steps;
