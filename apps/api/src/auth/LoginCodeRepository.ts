@@ -8,6 +8,15 @@ export type LoginCode = typeof loginCodes.$inferSelect;
 export class LoginCodeRepository {
   constructor(private readonly db: Db) {}
 
+  // Coordinate requests across API processes without creating a user before verification.
+  // Every code issue/verification for one email uses the same transaction-scoped lock.
+  withEmail<T>(email: string, work: (codes: LoginCodeRepository) => Promise<T>): Promise<T> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${email}, 0))`);
+      return work(new LoginCodeRepository(tx));
+    });
+  }
+
   async create(code: { email: string; codeHash: string; expiresAt: Date; createdAt: Date }) {
     await this.db.insert(loginCodes).values(code);
   }

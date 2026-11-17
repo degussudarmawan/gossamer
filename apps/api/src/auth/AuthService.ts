@@ -41,18 +41,19 @@ export class AuthService {
     const email = AuthService.normalizeEmail(rawEmail);
     const now = this.clock.now();
 
-    const issued = await this.codes.issuedSince(email, new Date(now.getTime() - 60 * 60_000));
-    const newest = issued[0];
-    if (issued.length >= AUTH_POLICY.maxCodesPerHour) return 'too_many';
-    if (newest && now.getTime() - newest.getTime() < AUTH_POLICY.resendWaitMs) return 'too_many';
+    const code = await this.codes.withEmail(email, async (codes) => {
+      const issued = await codes.issuedSince(email, new Date(now.getTime() - 60 * 60_000));
+      const newest = issued[0];
+      if (issued.length >= AUTH_POLICY.maxCodesPerHour) return null;
+      if (newest && now.getTime() - newest.getTime() < AUTH_POLICY.resendWaitMs) return null;
 
-    const code = this.hasher.newCode();
-    await this.codes.create({
-      email,
-      codeHash: this.hasher.hash(email, code),
-      expiresAt: new Date(now.getTime() + AUTH_POLICY.codeTtlMs),
-      createdAt: now,
+      const code = this.hasher.newCode();
+      await codes.create({ email, codeHash: this.hasher.hash(email, code),
+        expiresAt: new Date(now.getTime() + AUTH_POLICY.codeTtlMs), createdAt: now });
+      return code;
     });
+    if (code === null) return 'too_many';
+    // Network I/O happens after the transaction commits, never while holding the email lock.
     await this.mailer.sendSignInCode(email, code);
     return 'sent';
   }
@@ -62,16 +63,20 @@ export class AuthService {
     const email = AuthService.normalizeEmail(rawEmail);
     const now = this.clock.now();
 
-    // Only the newest code for an email counts; asking for a new one retires the old.
-    const issued = await this.codes.newestFor(email);
-    if (!issued || issued.usedAt || issued.expiresAt <= now || issued.attempts >= AUTH_POLICY.maxAttempts) {
-      return null;
-    }
-    if (!this.hasher.matches(issued.codeHash, email, code)) {
-      await this.codes.recordWrongGuess(issued.id);
-      return null;
-    }
-    if (!(await this.codes.claim(issued.id, now))) return null;
+    const claimed = await this.codes.withEmail(email, async (codes) => {
+      // Re-read after obtaining the lock: retries cannot bypass expiry or attempt limits.
+      const issued = await codes.newestFor(email);
+      const checkedAt = this.clock.now();
+      if (!issued || issued.usedAt || issued.expiresAt <= checkedAt || issued.attempts >= AUTH_POLICY.maxAttempts) {
+        return false;
+      }
+      if (!this.hasher.matches(issued.codeHash, email, code)) {
+        await codes.recordWrongGuess(issued.id);
+        return false;
+      }
+      return codes.claim(issued.id, checkedAt);
+    });
+    if (!claimed) return null;
 
     const user = await this.users.findOrCreateByEmail(email, now);
     const token = SessionToken.issue();

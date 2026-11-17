@@ -22,3 +22,31 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: gossamer_test
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: gossamer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gossamer_test -d gossamer_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @spider-web/api test:postgres
+        env:
+          POSTGRES_TEST_URL: postgresql://gossamer_test:local-test-only@127.0.0.1:5432/gossamer_test
