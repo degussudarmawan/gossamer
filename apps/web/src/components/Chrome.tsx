@@ -32,17 +32,28 @@ export function Corner({ className = '' }: { className?: string }) {
 
   const link = 'cursor-pointer underline decoration-1 underline-offset-4';
   return (
-    <div className={`flex items-center gap-4 text-sm font-medium text-ink-soft ${className}`}>
+    // One row on wide screens. On phones the links sit above the picker, so
+    // neither runs into the wordmark.
+    <div
+      className={`flex flex-col-reverse items-end gap-2 text-sm font-medium text-ink-soft lg:flex-row lg:items-center lg:gap-4 ${className}`}
+    >
       <ThemePicker />
-      {loading ? null : user ? (
-        <button type="button" onClick={leave} className={link}>
-          {failed ? 'couldn’t sign out. try again' : 'sign out'}
-        </button>
-      ) : (
-        <Link to="/sign-in" className={link}>
-          sign in
-        </Link>
-      )}
+      <nav className="flex items-center gap-4">
+        {loading ? null : user ? (
+          <>
+            <Link to="/rooms" className={link}>
+              rooms
+            </Link>
+            <button type="button" onClick={leave} className={link}>
+              {failed ? 'couldn’t sign out. try again' : 'sign out'}
+            </button>
+          </>
+        ) : (
+          <Link to="/sign-in" className={link}>
+            sign in
+          </Link>
+        )}
+      </nav>
     </div>
   );
 }

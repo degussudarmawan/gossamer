@@ -1,19 +1,25 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 
-// Live pixel size of an element, for drawings that are laid out in real pixels.
+/**
+ * Live pixel size of an element, for drawings that are laid out in real pixels.
+ * Returns a ref to put on the element, and its size.
+ *
+ * The ref is a callback, not an object, so it also works for an element that
+ * only appears later (after data has loaded, say): measuring starts whenever
+ * the element actually arrives.
+ */
 export function useElementSize<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
+  const [element, setElement] = useState<T | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const observer = new ResizeObserver(() => {
-      setSize({ width: el.clientWidth, height: el.clientHeight });
-    });
-    observer.observe(el);
+    if (!element) return;
+    const measure = () => setSize({ width: element.clientWidth, height: element.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [element]);
 
-  return [ref, size] as const;
+  return [setElement, size] as const;
 }
