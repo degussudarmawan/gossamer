@@ -1,6 +1,19 @@
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
 import Home from './pages/Home';
+import SignIn from './pages/SignIn';
+import { SessionProvider } from './session';
 
-// Routing arrives with the sign-in slice; until then there is one page.
 export default function App() {
-  return <Home />;
+  return (
+    <SessionProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/sign-in" element={<SignIn />} />
+          {/* any address we don't know goes home */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </SessionProvider>
+  );
 }
