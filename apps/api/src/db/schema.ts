@@ -1,4 +1,4 @@
-import { index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, pgTable, primaryKey, uniqueIndex, boolean, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 
@@ -35,3 +35,36 @@ export const sessions = pgTable('sessions', {
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   createdAt: createdAt(),
 });
+
+// Private collections: invite credentials never appear in read responses.
+export const rooms = pgTable('rooms', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  prompt: text('prompt').notNull().default(''),
+  seed: uuid('seed').notNull().defaultRandom(),
+  inviteHash: text('invite_hash').notNull().unique(),
+  closed: boolean('closed').notNull().default(false),
+  nextPosition: integer('next_position').notNull().default(1),
+  createdAt: createdAt(),
+}, (t) => [index('rooms_owner_idx').on(t.ownerId)]);
+
+export const roomMembers = pgTable('room_members', {
+  roomId: uuid('room_id').notNull().references(() => rooms.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: createdAt(),
+}, (t) => [primaryKey({ columns: [t.roomId, t.userId] }), index('members_user_idx').on(t.userId)]);
+
+export const messages = pgTable('messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  roomId: uuid('room_id').notNull().references(() => rooms.id, { onDelete: 'cascade' }),
+  senderId: uuid('sender_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  body: text('body').notNull(),
+  signature: text('signature'),
+  position: integer('position').notNull(),
+  // Caller-supplied UUID makes retrying a send safe.
+  requestId: uuid('request_id').notNull(),
+  removedAt: timestamp('removed_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('messages_position_idx').on(t.roomId, t.position),
+  uniqueIndex('messages_request_idx').on(t.roomId, t.senderId, t.requestId)]);

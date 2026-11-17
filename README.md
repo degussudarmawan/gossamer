@@ -30,3 +30,7 @@ apps/web     React + TypeScript + Tailwind (Vite)
 apps/api     Hono + TypeScript
 prototype/   the original single-file canvas sketch; open index.html in a browser
 ```
+
+## Private-room backend
+
+Private occasion rooms now have a backend API; the frontend is not connected yet.

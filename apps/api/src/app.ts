@@ -1,4 +1,8 @@
+import { RoomController } from './rooms/RoomController.js';
+import { RoomService } from './rooms/RoomService.js';
+import { RoomRepository } from './rooms/RoomRepository.js';
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { csrf } from 'hono/csrf';
 import { AuthController } from './auth/AuthController.js';
 import { AuthService } from './auth/AuthService.js';
@@ -45,8 +49,10 @@ export function createApp(deps: AppDeps) {
 
   app.get('/health', (c) => c.json({ ok: true }));
   app.route('/auth', authController.routes());
+  app.route('/rooms', new RoomController(new RoomService(new RoomRepository(deps.db), deps.clock), authController).routes());
 
   app.onError((err, c) => {
+    if (err instanceof HTTPException) return err.getResponse();
     console.error(`${c.req.method} ${c.req.path} failed:`, err);
     return c.json({ error: 'server_error' }, 500);
   });
