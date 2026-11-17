@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createApp } from '../app.js';
-import { openDb, type Db } from '../db/client.js';
+import { openDb, type LocalDb } from '../db/client.js';
 import { rooms } from '../db/schema.js';
 
 type MessagePage = { messages: { id: string; body: string; position: number }[]; nextAfter: number };
 type Receipt = { message: { id: string; position: number } };
-let db: Db;
+let db: LocalDb;
 let app: ReturnType<typeof createApp>;
 let owner: string;
 let friend: string;

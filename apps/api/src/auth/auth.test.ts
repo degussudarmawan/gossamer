@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
-import { openDb, type Db } from '../db/client.js';
+import { openDb, type LocalDb } from '../db/client.js';
 import { users } from '../db/schema.js';
 import { AUTH_POLICY } from './AuthService.js';
 
@@ -8,7 +8,7 @@ const { codeTtlMs: CODE_TTL_MS, maxAttempts: MAX_ATTEMPTS, resendWaitMs: RESEND_
 
 // Each test gets its own in-memory database, a mailer that records what it was
 // asked to send, and a clock the test can move.
-let db: Db;
+let db: LocalDb;
 let app: ReturnType<typeof createApp>;
 let sent: { email: string; code: string }[];
 let clock: Date;
