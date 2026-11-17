@@ -7,7 +7,6 @@ import OrbitSpider from '../components/OrbitSpider';
 import { useElementSize } from '../hooks/useElementSize';
 import { useFontReady } from '../hooks/useFontReady';
 import { FONT, LandingScene, TIMELINE, WORRY, type Point, type Thread } from '../landing/LandingScene';
-import { useSession } from '../session';
 
 // The landing page is one pinned scene that scrolling plays through:
 //   the title, circled by the spider
@@ -64,7 +63,6 @@ export default function Home() {
   const [stage, { width, height }] = useElementSize<HTMLDivElement>();
   const { scrollYProgress: progress } = useScroll({ target: scroller, offset: ['start start', 'end end'] });
   const fontReady = useFontReady(FONT);
-  const { user, loading } = useSession();
 
   const titleOpacity = useTransform(progress, TIMELINE.titleOut, [1, 0]);
   const worryOpacity = useTransform(progress, TIMELINE.worryIn, [0, 1]);
@@ -133,17 +131,18 @@ export default function Home() {
           {TIMELINE.captions.map((caption) => (
             <Caption key={caption.text} {...caption} progress={progress} />
           ))}
-          {/* Where the story ends, the way in. Clickable only once it has faded in. */}
-          {!loading && !user && (
-            <motion.div
-              className="absolute inset-x-0 top-7 text-center"
-              style={{ opacity: inviteOpacity, pointerEvents: invitePointer }}
-            >
-              <Link to="/sign-in" className="text-sm font-medium text-ink underline decoration-1 underline-offset-4">
-                leave yours
-              </Link>
-            </motion.div>
-          )}
+          {/* Where the story ends, the ways in. Clickable only once they have faded in. */}
+          <motion.div
+            className="absolute inset-x-0 top-7 flex justify-center gap-5 text-sm font-medium"
+            style={{ opacity: inviteOpacity, pointerEvents: invitePointer }}
+          >
+            <Link to="/rooms/new" className="text-ink underline decoration-1 underline-offset-4">
+              open a room
+            </Link>
+            <Link to="/join" className="text-ink underline decoration-1 underline-offset-4">
+              have a code?
+            </Link>
+          </motion.div>
         </div>
 
         {/* A short strand near the bottom: "there is more below". On phones it sits above the help link. */}
