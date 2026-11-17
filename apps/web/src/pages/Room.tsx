@@ -77,7 +77,30 @@ export default function Room() {
   }
 
   const hub = WebLayout.hubFor(width, height);
+  const wide = width >= 1024;
   const count = messages.length;
+
+  const buttons = (
+    <nav className="pointer-events-auto flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+      {room.closed ? (
+        <p className={note}>closed</p>
+      ) : (
+        <button type="button" onClick={() => setPanel('write')} className={`${primary} bg-(--cloth)`}>
+          write
+        </button>
+      )}
+      {count > 0 && (
+        <button type="button" onClick={() => setPanel('read')} className={quiet}>
+          read {count}
+        </button>
+      )}
+      {room.isOwner && (
+        <button type="button" onClick={() => setPanel('invite')} className={quiet}>
+          invite
+        </button>
+      )}
+    </nav>
+  );
 
   return (
     <section ref={stage} className="relative h-dvh overflow-hidden">
@@ -86,39 +109,24 @@ export default function Room() {
       <Wordmark className="absolute top-8 left-6 z-10" />
       <Corner className="absolute top-7 right-6 z-10" />
 
-      {/* The title sits inside the hub ring, sized so no word has to break. */}
-      <h1
-        className="pointer-events-none absolute line-clamp-3 -translate-x-1/2 -translate-y-1/2 text-center font-hand leading-snug"
-        // the landing page's title size, unless a long word needs it smaller to fit the ring
-        style={{
-          left: hub.cx,
-          top: hub.cy,
-          width: hub.rx * 1.5,
-          fontSize: WebLayout.titleSize(room.title, hub, width >= 1024 ? 44 : 22),
-        }}
+      {/* The title sits inside the hub ring, sized so no word has to break. On wide
+          screens the buttons sit under it inside the ring, as on the landing page;
+          the web then has the rest of the screen. */}
+      <div
+        className="pointer-events-none absolute z-10 grid -translate-x-1/2 -translate-y-1/2 justify-items-center gap-4 text-center"
+        style={{ left: hub.cx, top: hub.cy, width: hub.rx * 1.5 }}
       >
-        {room.title}
-      </h1>
+        <h1
+          className="line-clamp-2 font-hand leading-snug"
+          // the landing page's title size, unless a long word needs it smaller to fit the ring
+          style={{ fontSize: WebLayout.titleSize(room.title, hub, wide ? 44 : 22) }}
+        >
+          {room.title}
+        </h1>
+        {wide && buttons}
+      </div>
 
-      <nav className="absolute inset-x-0 bottom-7 z-10 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 px-6">
-        {room.closed ? (
-          <p className={note}>closed</p>
-        ) : (
-          <button type="button" onClick={() => setPanel('write')} className={`${primary} bg-(--cloth)`}>
-            write
-          </button>
-        )}
-        {count > 0 && (
-          <button type="button" onClick={() => setPanel('read')} className={quiet}>
-            read {count}
-          </button>
-        )}
-        {room.isOwner && (
-          <button type="button" onClick={() => setPanel('invite')} className={quiet}>
-            invite
-          </button>
-        )}
-      </nav>
+      {!wide && <div className="absolute inset-x-0 bottom-7 z-10 px-6">{buttons}</div>}
 
       <Sheet open={panel === 'write'} onClose={close} title="write">
         <Composer

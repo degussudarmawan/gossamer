@@ -10,7 +10,7 @@ import {
 } from 'motion/react';
 import { useFontReady } from '../hooks/useFontReady';
 import type { Message } from '../lib/RoomApi';
-import { LETTER_SPACING, pointAlong, WEIGHT, WebLayout, type Point, type Thread } from '../web/WebLayout';
+import { pointAlong, WEIGHT, WebLayout, type Point, type Thread } from '../web/WebLayout';
 import OrbitSpider from './OrbitSpider';
 
 // A room's web, woven entirely from its messages. The spider writes it: when
@@ -22,8 +22,10 @@ import OrbitSpider from './OrbitSpider';
 // as an ordinary list on the room screen, so nothing here is the only way to
 // read anything.
 
-const SECONDS_PER_THREAD = 0.9;
-const MAX_REPLAY_SECONDS = 9; // however many messages, opening a room never takes longer than this
+const SECONDS_PER_THREAD = 1.2;
+const MAX_REPLAY_SECONDS = 6;
+/** How many of the newest messages the spider writes when a room opens. */
+const REPLAY_NEWEST = 4;
 // Of the time given to each thread, this share is spent writing it; the rest
 // is the spider walking to where the next one starts.
 const WRITING = 0.8;
@@ -64,18 +66,15 @@ function WordThread({
         className="pointer-events-auto cursor-pointer fill-ink font-hand"
         fontSize={thread.size}
         fontWeight={WEIGHT[thread.kind]}
-        letterSpacing={`${LETTER_SPACING}em`}
-        // the spiral is the finer silk; the radials hold the web up
-        opacity={thread.kind === 'spiral' ? 0.86 : 1}
+        // centred on the strand line, which is what the layout's no-overlap spacing assumes
         dy="0.32em"
         mask={writing ? `url(#m-${thread.id})` : undefined}
-        // an outline in the cloth colour, so where two strands cross, the one on top stays readable
-        stroke="var(--cloth)"
-        strokeWidth={thread.size * 0.28}
-        paintOrder="stroke"
         onClick={() => onPick(thread.id)}
       >
-        <textPath href={`#t-${thread.id}`}>{thread.text}</textPath>
+        {/* letters spaced to fill the strand exactly, as on the landing page */}
+        <textPath href={`#t-${thread.id}`} textLength={thread.length} lengthAdjust="spacing">
+          {thread.text}
+        </textPath>
       </text>
     </>
   );
@@ -109,7 +108,16 @@ export default function RoomWeb({ width, height, seed, messages, onPick }: Props
   const home = useMotionValue(1);
   const lastTip = useRef<Point | null>(null);
 
+  // On opening a room, everything but the newest few is simply there; the
+  // spider writes only those, at an unhurried pace, rather than racing
+  // through every message.
+  const opened = useRef(false);
   useEffect(() => {
+    if (!opened.current && total > 0) {
+      opened.current = true;
+      written.set(Math.max(0, total - REPLAY_NEWEST));
+      setDone(Math.max(0, total - REPLAY_NEWEST));
+    }
     const from = written.get();
     // nothing new to write (or fewer threads than before, after a removal): just show them
     if (still || total <= from) {
@@ -163,13 +171,9 @@ export default function RoomWeb({ width, height, seed, messages, onPick }: Props
   );
 
   if (width === 0) return null;
-  // Written in message order, but drawn spiral first and radials on top, as
-  // in a real web: the radials stay whole and the spiral passes under them.
-  const shown = layout.threads.slice(0, done + 1).map((thread, index) => ({ thread, index }));
-  const layered = [...shown.filter((t) => t.thread.kind === 'spiral'), ...shown.filter((t) => t.thread.kind === 'radial')];
   return (
     <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
-      {layered.map(({ thread, index }) => (
+      {layout.threads.slice(0, done + 1).map((thread, index) => (
         <WordThread
           key={thread.id}
           thread={thread}
