@@ -109,25 +109,21 @@ export default function Room() {
       <Wordmark className="absolute top-8 left-6 z-10" />
       <Corner className="absolute top-7 right-6 z-10" />
 
-      {/* The title sits inside the hub ring, sized so no word has to break. On wide
-          screens the buttons sit under it inside the ring, as on the landing page;
-          the web then has the rest of the screen. */}
-      <div
-        className="pointer-events-none absolute z-10 grid -translate-x-1/2 -translate-y-1/2 justify-items-center gap-4 text-center"
-        // on a phone the title keeps clear of the spider pacing the small ring
-        style={{ left: hub.cx, top: hub.cy, width: hub.rx * (wide ? 1.5 : 1.25) }}
+      {/* The title sits inside the hub ring, sized so no word has to break. */}
+      <h1
+        className="pointer-events-none absolute z-10 line-clamp-3 -translate-x-1/2 -translate-y-1/2 text-center font-hand leading-tight"
+        style={{
+          left: hub.cx,
+          top: hub.cy,
+          width: hub.rx * 1.6,
+          fontSize: WebLayout.titleSize(room.title, hub, wide ? 36 : 18, 1.55),
+        }}
       >
-        <h1
-          className="line-clamp-2 font-hand leading-snug"
-          // the landing page's title size, unless a long word needs it smaller to fit the ring
-          style={{ fontSize: WebLayout.titleSize(room.title, hub, wide ? 44 : 22, wide ? 1.45 : 1.2) }}
-        >
-          {room.title}
-        </h1>
-        {wide && buttons}
-      </div>
+        {room.title}
+      </h1>
 
-      {!wide && <div className="absolute inset-x-0 bottom-7 z-10 px-6">{buttons}</div>}
+      {/* the web fills the screen; the buttons sit below it */}
+      <div className="absolute inset-x-0 bottom-6 z-10 px-6">{buttons}</div>
 
       <Sheet open={panel === 'write'} onClose={close} title="write">
         <Composer

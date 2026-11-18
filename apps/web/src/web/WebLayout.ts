@@ -1,57 +1,43 @@
-import { ringPoint } from '../components/OrbitSpider';
 import { TextRuler } from '../lib/TextRuler';
 
 // Where every message goes in a room's web. No React in here: given a screen
 // size, the room's seed and its messages, this works out the geometry, and
 // components/RoomWeb.tsx draws it.
 //
-// The web is made only of words, and no two words ever overlap.
+// The web fills the screen and is made only of words; no two letters ever
+// touch. It is built the way an orb weaver builds:
+//   - a small hub ring round the room's title
+//   - spokes: sentences running from the hub all the way out to the frame
+//   - rings: sentences hanging between neighbouring spokes as straight
+//     scallops that sag a little toward the hub, their corners on the spokes.
+//     Spun from the outside in, leaving an open zone round the hub.
 //
-// Shape (the owner's design study, at the landing page's proportions):
-//   - a hub: the ring round the room's title
-//   - spokes: straight strands from the hub toward the edge of the screen,
-//     each carrying one message
-//   - rings round the hub, crossing every spoke. A ring is one continuous
-//     strand of sentences: a message flows along it across as many spokes as
-//     it needs, leaving a small even gap (a knot) wherever it meets a spoke.
-//     Each ring is written as two halves, over the top and under the bottom,
-//     both left to right, so sentences always read in order.
+// A handful of messages (a "young" web) are spokes only, written large, like
+// the landing page. Once there are more, the web grows its rings.
 //
-// Nothing overlaps because of how it is laid out, not by luck:
-//   - ring letters stop short of every spoke by more than half the tallest
-//     letter a spoke can carry
-//   - rings are further apart than two lines of ring letters
-//   - spokes start clear of the hub ring and the spider walking it
+// Letters: one size for spokes, one smaller size for rings, each spread just
+// enough to fill its strand. The layout tries large letters first and only
+// steps down as the messages need more room, so the web always fills the
+// screen. If even the smallest size can't hold every message, the oldest are
+// left off the web (they are always in the full list).
 //
-// Letter size: a spoke follows the landing page (its length ÷ the text's width
-// in ems × 1.05, within a range set by the screen, letters spread to fill it).
-// Rings use one steady, smaller size, so the spokes read as the web's frame
-// and long messages stay calm. A spoke only takes a message that fits on it
-// whole; anything longer goes to the rings. Only messages over MAX_CHARS are
-// cut, at a word, with …; the full message is always in the list.
-//
-// Messages are placed in order, so a new message never moves an earlier one.
-// When the web is full, the oldest messages leave in batches of CHUNK, so the
-// web rearranges only once every few messages rather than every time.
+// Ported from the design prototype; the numbers in TYPE are its tuned values.
 
 export type Point = { x: number; y: number };
 
-/** One run of words on one stretch of silk. */
-export type Part = {
+/** One run of words along one strand of silk. */
+export type Run = {
   text: string;
-  /** The line the words follow, left to right. */
+  /** The line the words follow, in reading order. */
   points: Point[];
   d: string;
   /** Length of the line: the letters are spaced to fill exactly this. */
   length: number;
-};
-
-export type Thread = {
-  id: string;
-  /** A spoke message is one part; a ring message may run over several stretches. */
-  parts: Part[];
   size: number;
+  weight: 400 | 500;
   kind: 'spoke' | 'ring';
+  /** The message(s) whose words are in this run. */
+  ids: string[];
 };
 
 /** The ring in the middle that holds the room's title. */
@@ -59,45 +45,84 @@ export type Hub = { cx: number; cy: number; rx: number; ry: number };
 
 type Msg = { id: string; position: number; body: string };
 
-const FONT = 'Quicksand Variable';
-export const WEIGHT = { spoke: 500, ring: 400 } as const;
-const rulers = { spoke: new TextRuler(FONT, WEIGHT.spoke), ring: new TextRuler(FONT, WEIGHT.ring) };
-
-/**
- * Space kept free of the web: the header at the top, and on phones the
- * buttons at the bottom. On wide screens the buttons sit inside the ring, as
- * on the landing page, so the web can reach almost to the bottom edge.
- */
-const keepClear = (wide: boolean) => ({ top: 84, bottom: wide ? 30 : 104, side: 16 });
-
-/**
- * Type and spacing per screen.
- *   spoke    letter range for spokes (the landing page's sizes)
- *   ring     the one letter size for rings, always below the smallest spoke
- *   nominal  the spoke size a message is matched against when choosing its spoke
- *   ringGap  distance between rings where the web is narrowest
- *   spokeStart  gap between the hub ring and the start of every spoke (room for the spider's legs)
- *   firstRing   gap between the hub ring and the first ring's letters
- */
-const TYPE = {
-  wide: { spoke: { min: 22, max: 30 }, ring: 18, nominal: 26, ringGap: 46, spokeStart: 28, firstRing: 30 },
-  narrow: { spoke: { min: 16, max: 19 }, ring: 13.5, nominal: 18, ringGap: 33, spokeStart: 20, firstRing: 20 },
+type Type = {
+  /** Screen space kept free of the web: the header at the top, the buttons at the bottom. */
+  clear: { top: number; bottom: number; side: number };
+  hub: number;
+  spokes: number;
+  spoke: { size: number; weight: 500; track: [number, number]; ideal: number };
+  ring: { size: number; weight: 400; track: [number, number]; base: number };
+  /** Gap between the hub ring and the first spoke letter (the spider's legs). */
+  spokeStart: number;
+  /** The open zone round the hub that the rings never enter. */
+  freeZone: number;
+  /** Range of spacing between rings, where the web is narrowest. */
+  gap: [number, number];
+  /** How far ring letters stop short of spoke letters. */
+  knot: number;
+  /** How much each ring chord sags toward the hub, as a share of its length. */
+  sag: number;
+  /** A web with only a few messages: spokes only, at landing-page sizes. */
+  young: { size: number; min: number; track: number; upTo: number; inset: number; steep: number };
 };
-/** How far spoke letters may be spread past their natural width to fill the spoke. */
-const SPOKE_SPREAD = 1.8;
-/** Glyphs reach about this far either side of the strand line, in ems (the text sits centred on it). */
-const HALF_HEIGHT = 0.62;
-/** Messages longer than this are cut at a word on the web. */
-const MAX_CHARS = 60;
-/** When the web is full, the oldest messages leave this many at a time. */
-const CHUNK = 4;
-/** How square the web's outline is: 2 is an oval; higher reaches further into the corners. */
-const OUTLINE_SQUARENESS = 2.6;
-/** On a phone, a spoke steeper than this only takes short messages: long vertical text is hard to read. */
-const STEEP = Math.sin((55 * Math.PI) / 180);
-const STEEP_MAX_CHARS = 30;
-/** Ring letters may be spread up to this much past their natural width, so each stretch is filled without holes. */
-const RING_SPREAD = 1.25;
+
+const TYPE: Record<'wide' | 'narrow', Type> = {
+  // Base sizes are the owner's chosen scale (spokes ~28px, rings ~20px at the
+  // largest step); TYPE_SCALES steps down from there only as messages need room.
+  wide: {
+    clear: { top: 84, bottom: 84, side: 24 },
+    hub: 108,
+    spokes: 11,
+    spoke: { size: 18, weight: 500, track: [0.05, 0.34], ideal: 0.18 },
+    ring: { size: 13, weight: 400, track: [-0.03, 0.24], base: 0.07 },
+    spokeStart: 20,
+    freeZone: 50,
+    gap: [24, 36],
+    knot: 3,
+    sag: 0.085,
+    young: { size: 30, min: 18, track: 0.2, upTo: 6, inset: 40, steep: 0.66 },
+  },
+  narrow: {
+    clear: { top: 92, bottom: 96, side: 12 },
+    hub: 54,
+    spokes: 10,
+    spoke: { size: 12, weight: 500, track: [0.03, 0.34], ideal: 0.16 },
+    ring: { size: 10, weight: 400, track: [-0.03, 0.24], base: 0.06 },
+    spokeStart: 14,
+    freeZone: 28,
+    gap: [20, 32],
+    knot: 2.5,
+    sag: 0.085,
+    young: { size: 20, min: 13, track: 0.18, upTo: 5, inset: 10, steep: 0.92 },
+  },
+};
+/** Letter sizes tried for a full web, as multiples of TYPE's: largest first, so the web fills the screen. */
+const TYPE_SCALES = [1.55, 1.4, 1.25, 1.1, 1];
+/** Web sizes tried, as shares of the whole free screen, when even the smallest letters leave the rings unfinished. */
+const WEB_SCALES = [1, 0.9, 0.8, 0.7];
+/** Ring messages longer than this are cut at a word. */
+const MAX_CHARS = 120;
+/** A spoke's text reaches at least this share of the way to the frame. */
+const SPOKE_MIN = 0.84;
+/** The innermost ring must be at least this full, or the web is too big for its messages. */
+const LAST_RING_FILL = 0.8;
+/** Steps between ring spacings tried. */
+const GAP_STEP = 2;
+
+const FONT = 'Quicksand Variable';
+const rulers = { 400: new TextRuler(FONT, 400), 500: new TextRuler(FONT, 500) };
+
+const TAU = Math.PI * 2;
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+const dist = (p: Point, q: Point) => Math.hypot(q.x - p.x, q.y - p.y);
+const chars = (t: string) => [...t].length;
+const ems = (text: string, weight: 400 | 500) => rulers[weight].widthInEms(text);
+/** Width in px of `text` at `size`, with `track` ems added between letters. */
+const widthAt = (text: string, size: number, weight: 400 | 500, track: number) =>
+  (ems(text, weight) + track * (chars(text) - 1)) * size;
+const pathOf = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join('');
+/** Text along a direction reads upright: left to right, or bottom to top when nearly vertical. */
+const readable = (d: Point) => (Math.abs(d.x) > 0.2 * Math.abs(d.y) ? d.x > 0 : d.y < 0);
 
 // Small seeded generator: the same seed always gives the same numbers.
 function seeded(seed: number) {
@@ -110,51 +135,73 @@ function seeded(seed: number) {
   };
 }
 
-const TAU = Math.PI * 2;
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-const distance = (p: Point, q: Point) => Math.hypot(q.x - p.x, q.y - p.y);
-const pathOf = (points: Point[]) =>
-  points.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join('');
-/** Pointing left to right, so words drawn along it are upright. */
-const leftToRight = (points: Point[]) =>
-  points[points.length - 1]!.x < points[0]!.x ? [...points].reverse() : points;
+function shorten(body: string, max: number): string {
+  if (body.length <= max) return body;
+  const cut = body.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > 0 ? cut.slice(0, space) : cut).replace(/[\s,.;:!?-]+$/, '')}…`;
+}
+
+function cutWord(word: string, room: number, size: number, weight: 400 | 500, track: number): string {
+  let cut = word;
+  while (cut.length > 1 && widthAt(`${cut}…`, size, weight, track) > room) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
+/**
+ * Where the strand line sits within a letter: half the letter band (ascender
+ * top to descender bottom), and how far below the line the baseline must go so
+ * the letters are centred on it. Both in ems, measured from the font itself.
+ */
+function glyphMetrics() {
+  const ctx = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
+  if (!ctx) return { half: 0.47, dy: 0.27 };
+  ctx.font = `400 100px "${FONT}"`;
+  const m = ctx.measureText('bdfhklgjpqy!?');
+  const asc = m.actualBoundingBoxAscent / 100;
+  const desc = m.actualBoundingBoxDescent / 100;
+  return { half: (asc + desc) / 2, dy: (asc - desc) / 2 };
+}
 
 /** A line of points that text can be written along, measured by distance. */
-class Strand {
-  /** Distance from the start to each point. */
+class Line {
   readonly cum: number[] = [0];
 
   constructor(readonly points: Point[]) {
-    for (let i = 1; i < points.length; i++) this.cum.push(this.cum[i - 1]! + distance(points[i - 1]!, points[i]!));
+    for (let i = 1; i < points.length; i++) this.cum.push(this.cum[i - 1]! + dist(points[i - 1]!, points[i]!));
   }
 
   get length() {
     return this.cum[this.cum.length - 1]!;
   }
 
-  /** Index of the last point at or before distance `s`. */
   private indexAt(s: number) {
     let lo = 0;
     let hi = this.points.length - 1;
     while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (this.cum[mid]! <= s) lo = mid;
-      else hi = mid;
+      const m = (lo + hi) >> 1;
+      if (this.cum[m]! <= s) lo = m;
+      else hi = m;
     }
     return lo;
   }
 
   pointAt(s: number): Point {
-    if (this.points.length === 1) return this.points[0]!;
     const i = this.indexAt(s);
     const a = this.points[i]!;
     const b = this.points[i + 1] ?? a;
-    const step = this.cum[i + 1]! - this.cum[i]! || 1;
-    const t = clamp((s - this.cum[i]!) / step, 0, 1);
+    const t = clamp((s - this.cum[i]!) / (this.cum[i + 1]! - this.cum[i]! || 1), 0, 1);
     return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
   }
 
-  /** The stretch between two distances, following every bend in between. */
+  tangentAt(s: number): Point {
+    const i = Math.min(this.indexAt(s), this.points.length - 2);
+    const a = this.points[i]!;
+    const b = this.points[i + 1]!;
+    const l = dist(a, b) || 1;
+    return { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
+  }
+
   slice(from: number, to: number): Point[] {
     const out = [this.pointAt(from)];
     for (let i = this.indexAt(from) + 1; i < this.points.length && this.cum[i]! < to; i++) out.push(this.points[i]!);
@@ -165,63 +212,72 @@ class Strand {
 
 /** The point a fraction `u` (0 to 1) of the way along a line of points. */
 export function pointAlong(points: Point[], u: number): Point {
-  const strand = new Strand(points);
-  return strand.pointAt(clamp(u, 0, 1) * strand.length);
+  const line = new Line(points);
+  return line.pointAt(clamp(u, 0, 1) * line.length);
 }
 
-/** The message on one line, cut back to the last whole word with … if it runs past `maxChars`. */
-function shorten(body: string, maxChars: number): string {
-  const line = body.replace(/\s+/g, ' ').trim();
-  if (line.length <= maxChars) return line;
-  const cut = line.slice(0, maxChars);
-  const space = cut.lastIndexOf(' ');
-  return `${(space > 0 ? cut.slice(0, space) : cut).replace(/[\s,.;:!?-]+$/, '')}…`;
-}
+type Spoke = {
+  angle: number;
+  u: Point;
+  /** Unit normal: which side of the spoke a point is on. */
+  n: Point;
+  /** Distance from the centre where its letters start. */
+  r0: number;
+  max: number;
+  min: number;
+  text: string | null;
+  len: number;
+  ids: string[];
+};
 
-/** One unbroken word too wide for any stretch: cut at a letter, with …, to fit `room` pixels. */
-function cutWord(word: string, room: number, size: number): string {
-  let cut = word;
-  while (cut.length > 1 && rulers.ring.widthInEms(`${cut}…`) * size > room) cut = cut.slice(0, -1);
-  return `${cut}…`;
-}
+/** One scallop of a ring between two spokes, with where its letters may start and stop. */
+type Chord = { line: Line; from: number; to: number; top: boolean; mid: number };
 
-type Spoke = { angle: number; strand: Strand };
-/** Half a ring (over the top, or under the bottom): its stretches between spokes, left to right. */
-type Track = Strand[];
+type Item = { id: string; body: string; order: number; text?: string };
+
+type Attempt = {
+  spokes: Spoke[];
+  result: { parts: Run[]; fits: boolean } | null;
+  omitted: Item[];
+  full: boolean;
+  placed: number;
+  type: Type;
+  scale: number;
+};
 
 export class WebLayout {
   readonly wide: boolean;
   readonly hub: Hub;
-  /** One per message on the web, in the order they were written. */
-  readonly threads: Thread[];
-  /** How many of the earliest messages aren't on the web (they are still in the full list). */
-  readonly hidden: number;
+  /** Every run of words on the web: spokes first, then the rings from the outside in. */
+  runs: Run[] = [];
+  /** How many of the earliest messages are not on the web (they are always in the full list). */
+  hidden = 0;
+  /** Baseline shift (ems) that centres letters on their strand line. */
+  readonly dy: number;
 
-  private readonly type: (typeof TYPE)['wide'];
-  private readonly wobble: [number, number, number];
-  private readonly spokes: Spoke[];
-  /** Ring halves from the inside out: ring 1 top, ring 1 bottom, ring 2 top, … */
-  private readonly tracks: Track[];
+  private T: Type;
+  private readonly base: Type;
+  private readonly rnd: () => number;
+  private readonly wob: [number, number, number];
+  private readonly c: Point;
+  private readonly rx: number;
+  private readonly ry: number;
+  private readonly half: number;
+  private scale = 1;
+  private spokes: Spoke[] = [];
+  private readonly ringCache = new Map<string, Chord[][]>();
 
-  /** The ring for a screen: the landing page's on wide screens, small and round on a phone. */
+  /** The hub for a screen. The room screen uses it to place the title inside. */
   static hubFor(width: number, height: number): Hub {
-    const wide = width >= 1024;
-    const clear = keepClear(wide);
-    const top = clear.top;
-    const bottom = height - clear.bottom;
-    const small = Math.min(width * 0.15, 80);
-    return {
-      cx: width / 2,
-      cy: (top + bottom) / 2,
-      rx: wide ? Math.min(width * 0.4, 250) : small,
-      ry: wide ? Math.min(height * 0.18, 145) : small,
-    };
+    const T = width >= 1024 ? TYPE.wide : TYPE.narrow;
+    const { top, bottom } = T.clear;
+    return { cx: width / 2, cy: (top + height - bottom) / 2, rx: T.hub, ry: T.hub };
   }
 
-  /** Letter size for a title so its longest word fits inside the ring, never above `max`. */
+  /** Letter size for a title so its longest word fits inside the hub, never above `max`. */
   static titleSize(title: string, hub: Hub, max: number, share: number): number {
-    const widest = Math.max(...title.split(/\s+/).map((word) => rulers.ring.widthInEms(word)), 0.1);
-    return Math.max(12, Math.min(max, (hub.rx * share) / widest));
+    const widest = Math.max(...title.split(/\s+/).map((word) => ems(word, 400)), 0.1);
+    return Math.max(11, Math.min(max, (hub.rx * share) / widest));
   }
 
   constructor(
@@ -231,257 +287,432 @@ export class WebLayout {
     messages: readonly Msg[],
   ) {
     this.wide = width >= 1024;
+    this.base = this.wide ? TYPE.wide : TYPE.narrow;
+    this.T = this.base;
     this.hub = WebLayout.hubFor(width, height);
-    this.type = this.wide ? TYPE.wide : TYPE.narrow;
+    this.c = { x: this.hub.cx, y: this.hub.cy };
+    const { top, bottom, side } = this.base.clear;
+    // the web's frame is the whole free screen
+    this.rx = width / 2 - side;
+    this.ry = (height - top - bottom) / 2;
 
-    const rnd = seeded(seed);
-    this.wobble = [rnd() * TAU, rnd() * TAU, rnd() * TAU];
-    // Enough spokes to read as a web, few enough that the ring between two of them holds a phrase.
-    const count = this.wide ? 7 + Math.floor(rnd() * 3) : 5 + Math.floor(rnd() * 2);
-    const turn = rnd() * TAU;
-    // unevenly spaced, as in a hand-spun web, but never two spokes nearly together
-    const angles = Array.from({ length: count }, (_, i) => turn + ((i + (rnd() - 0.5) * 0.5) / count) * TAU);
-    this.spokes = angles.map((a) => ({ angle: a, strand: this.spokeStrand(a) }));
-    this.tracks = this.ringTracks(angles, rnd);
+    this.rnd = seeded(seed);
+    this.wob = [this.rnd() * TAU, this.rnd() * TAU, this.rnd() * TAU];
+    const metrics = glyphMetrics();
+    this.half = metrics.half;
+    this.dy = metrics.dy;
 
-    // Lay out every message; if they don't all fit, drop the oldest CHUNK and try again.
-    const ordered = [...messages].sort((p, q) => p.position - q.position);
-    let start = 0;
-    let threads = this.place(ordered);
-    while (!threads && start < ordered.length) {
-      start = Math.min(ordered.length, start + CHUNK);
-      threads = this.place(ordered.slice(start));
+    const msgs: Item[] = [...messages]
+      .sort((p, q) => p.position - q.position)
+      .map((m, order) => ({ id: m.id, body: m.body.replace(/\s+/g, ' ').trim(), order }));
+    if (msgs.length === 0) return;
+    if (msgs.length <= this.base.young.upTo) this.layoutYoung(msgs);
+    else this.layoutWeb(msgs);
+  }
+
+  private hubRadius(a: number) {
+    return this.T.hub * (1 + 0.022 * Math.sin(3 * a + 1) + 0.012 * Math.sin(5 * a));
+  }
+
+  /** Distance from the centre to the web's frame in a direction: the free screen, slightly uneven. */
+  private outline(a: number) {
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    const n = 2.25;
+    const base = 1 / ((Math.abs(c) / this.rx) ** n + (Math.abs(s) / this.ry) ** n) ** (1 / n);
+    const [p1, p2, p3] = this.wob;
+    const uneven = 0.955 + 0.03 * Math.sin(2 * a + p1) + 0.02 * Math.sin(3 * a + p2) + 0.012 * Math.sin(5 * a + p3);
+    return base * Math.min(1, uneven) * this.scale;
+  }
+
+  /** Distance from the centre to the edge of the free screen in a direction. */
+  private screenEdge(a: number) {
+    const { top, bottom, side } = this.T.clear;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    const hx = c > 0 ? this.width - side - this.c.x : this.c.x - side;
+    const hy = s > 0 ? this.height - bottom - this.c.y : this.c.y - top;
+    return Math.min(hx / Math.abs(c || 1e-9), hy / Math.abs(s || 1e-9));
+  }
+
+  private makeSpoke(angle: number, outer: number): Spoke {
+    const u = { x: Math.cos(angle), y: Math.sin(angle) };
+    const r0 = this.hubRadius(angle) + this.T.spokeStart;
+    return { angle, u, n: { x: -u.y, y: u.x }, r0, max: outer - r0, min: 0, text: null, len: 0, ids: [] };
+  }
+
+  /** A spoke's words, from the hub outward (or inward, so they stay upright). */
+  private spokeRun(sp: Spoke, size: number): Run {
+    const { c } = this;
+    const a = { x: c.x + sp.u.x * sp.r0, y: c.y + sp.u.y * sp.r0 };
+    const b = { x: c.x + sp.u.x * (sp.r0 + sp.len), y: c.y + sp.u.y * (sp.r0 + sp.len) };
+    const points = readable(sp.u) ? [a, b] : [b, a];
+    return { text: sp.text ?? '', points, d: pathOf(points), length: sp.len, size, weight: 500, kind: 'spoke', ids: sp.ids };
+  }
+
+  // ---------- a young web: spokes only, landing-page sizes ----------
+
+  private layoutYoung(msgs: Item[]) {
+    const T = this.T;
+    const Y = T.young;
+    const k = msgs.length;
+    // the longest message takes the longest spoke
+    const byLen = [...msgs].sort((p, q) => widthAt(q.body, 1, 500, Y.track) - widthAt(p.body, 1, 500, Y.track));
+    // Evenly spaced, turned so the letters can be as large as possible without
+    // any spoke getting too steep to read. Two messages make one thread
+    // straight through the hub: a web's first line.
+    const plan = (track: number) => {
+      let best: { score: number; angles: number[]; size: number; track: number } | null = null;
+      for (let i = 0; i < 360; i++) {
+        const turn = (i / 360) * TAU;
+        const angles = Array.from({ length: k }, (_, j) => turn + (j / k) * TAU);
+        const room = angles
+          .map((a) => this.screenEdge(a) - Y.inset - this.hubRadius(a) - T.spokeStart)
+          .sort((p, q) => q - p);
+        const size = Math.min(...byLen.map((m, j) => room[j]! / widthAt(m.body, 1, 500, track)));
+        const steep = Math.max(...angles.map((a) => Math.abs(Math.sin(a))));
+        const score = Math.min(size, Y.size) - 40 * Math.max(0, steep - Y.steep) + 0.001 * Math.abs(Math.cos(turn));
+        if (!best || score > best.score) best = { score, angles, size, track };
+      }
+      return best!;
+    };
+    // airy letter-spacing if the messages fit at a readable size; tighter if that is what it takes
+    let best = plan(Y.track);
+    if (best.size < Y.min) best = plan(0.06);
+    const track = best.track;
+    const spokes = best.angles.map((a) => this.makeSpoke(a, this.screenEdge(a) - Y.inset));
+    const free = [...spokes];
+    const sizes: number[] = [];
+    for (const m of byLen) {
+      free.sort((p, q) => q.max - p.max);
+      const sp = free.shift()!;
+      const size = clamp(sp.max / widthAt(m.body, 1, 500, track), Y.min, Y.size);
+      let text = m.body;
+      if (widthAt(text, size, 500, track) > sp.max) {
+        text = shorten(text, Math.floor((chars(text) * sp.max) / widthAt(text, size, 500, track)));
+      }
+      sp.text = text;
+      sp.ids = [m.id];
+      sizes.push(size);
     }
-    this.threads = threads ?? [];
-    this.hidden = start;
+    // one size for every spoke, the smallest any of them needs, so they read as one family
+    const size = Math.min(...sizes);
+    for (const sp of spokes) {
+      sp.len = Math.min(sp.max, widthAt(sp.text ?? '', size, 500, track));
+      this.runs.push(this.spokeRun(sp, size));
+    }
+    this.spokes = spokes;
   }
 
-  // ---------- the shape ----------
+  // ---------- a full web: spokes and scalloped rings ----------
 
-  /** Distance from the centre to the drawn hub ring in a direction. */
-  private hubRadius(angle: number): number {
-    const { rx, ry } = this.hub;
-    const p = ringPoint(Math.atan2(Math.sin(angle) / ry, Math.cos(angle) / rx), rx, ry);
-    return Math.hypot(p.x, p.y);
+  private layoutWeb(msgs: Item[]) {
+    const count = Math.min(this.base.spokes, Math.max(5, Math.round(msgs.length * 0.5)));
+    const turn = this.rnd() * TAU;
+    // hand-spun: each spoke up to 12% of a slot off even spacing
+    const angles = Array.from({ length: count }, (_, i) => turn + ((i + (this.rnd() - 0.5) * 0.24) / count) * TAU);
+
+    // Fill the screen with the largest letters that still hold every message
+    // and leave the rings complete; shrink the web only if even the smallest
+    // letters can't fill it.
+    let best: Attempt | null = null;
+    search: for (const scale of WEB_SCALES) {
+      for (const f of TYPE_SCALES) {
+        this.scale = scale;
+        this.T = this.scaledType(f);
+        const attempt = { ...this.tryWeb(msgs, angles), type: this.T, scale };
+        const better =
+          !best || attempt.placed > best.placed || (attempt.placed === best.placed && attempt.full && !best.full);
+        if (better) best = attempt;
+        if (attempt.full && attempt.placed === msgs.length) break search;
+      }
+    }
+    if (!best) return;
+    this.scale = best.scale;
+    this.T = best.type;
+    this.spokes = best.spokes;
+    for (const sp of best.spokes) this.runs.push(this.spokeRun(sp, this.T.spoke.size));
+    if (best.result) this.runs.push(...best.result.parts);
+    this.hidden = best.omitted.length;
   }
 
-  /**
-   * Distance from the centre to the outline of the web in a direction: a
-   * rounded rectangle filling the free part of the screen, made a little
-   * irregular so it looks spun rather than drawn, never past the free area.
-   */
-  private edge(angle: number): number {
-    const { cx, cy } = this.hub;
-    const clear = keepClear(this.wide);
-    const halfWidth = cx - clear.side;
-    const halfHeight = cy - clear.top;
-    const c = Math.cos(angle);
-    const s = Math.sin(angle);
-    const n = OUTLINE_SQUARENESS;
-    const oval = 1 / ((Math.abs(c) / halfWidth) ** n + (Math.abs(s) / halfHeight) ** n) ** (1 / n);
-    const [p1, p2, p3] = this.wobble;
-    const uneven = 1 + 0.05 * Math.sin(2 * angle + p1) + 0.04 * Math.sin(3 * angle + p2) + 0.025 * Math.sin(5 * angle + p3);
-    const box = Math.min(halfWidth / Math.abs(c || 1e-9), halfHeight / Math.abs(s || 1e-9));
-    return Math.max(this.hubRadius(angle) + 40, Math.min(oval * Math.min(uneven, 1), box));
+  /** TYPE with every letter size and spacing multiplied by `f`. */
+  private scaledType(f: number): Type {
+    const b = this.base;
+    return {
+      ...b,
+      spoke: { ...b.spoke, size: b.spoke.size * f },
+      ring: { ...b.ring, size: b.ring.size * f },
+      freeZone: b.freeZone * f,
+      gap: [b.gap[0] * f, b.gap[1] * f],
+      knot: b.knot * f,
+    };
   }
 
-  /** A point a fraction `u` of the way from the hub ring (0) to the outline (1), in a direction. */
-  private at(angle: number, u: number): Point {
-    const { cx, cy } = this.hub;
-    const hub = this.hubRadius(angle);
-    const r = hub + (this.edge(angle) - hub) * u;
-    return { x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r };
+  private tryWeb(msgs: Item[], angles: number[]): Omit<Attempt, 'type' | 'scale'> {
+    const T = this.T;
+    const S = T.spoke;
+    const spokes = angles.map((a) => this.makeSpoke(a, this.outline(a)));
+    for (const sp of spokes) sp.min = sp.max * SPOKE_MIN;
+
+    // A spoke takes a message that can fill it from hub to frame within its letter-spacing range.
+    const fit = (text: string, sp: Spoke) => {
+      const n = chars(text);
+      if (n < 2) return null;
+      const w0 = ems(text, 500) * S.size;
+      const lo = w0 + S.track[0] * S.size * (n - 1);
+      const hi = w0 + S.track[1] * S.size * (n - 1);
+      if (hi < sp.min || lo > sp.max) return null;
+      const len = clamp(hi, sp.min, sp.max); // reach the frame if possible
+      const track = (len - w0) / (S.size * (n - 1));
+      return { len, cost: Math.abs(track - S.ideal) + 2 * (1 - len / sp.max) };
+    };
+    const rings: Item[] = [];
+    for (const m of msgs) {
+      let best: { sp: Spoke; f: { len: number; cost: number } } | null = null;
+      for (const sp of spokes) {
+        if (sp.text) continue;
+        const f = fit(m.body, sp);
+        if (f && (!best || f.cost < best.f.cost)) best = { sp, f };
+      }
+      if (best) Object.assign(best.sp, { text: m.body, len: best.f.len, ids: [m.id] });
+      else rings.push(m);
+    }
+    // any spoke still bare: give it one ring message, or two short ones joined by a ·
+    for (const sp of spokes) {
+      if (sp.text) continue;
+      let best: { pick: number[]; text: string; len: number; cost: number } | null = null;
+      for (let i = 0; i < rings.length; i++) {
+        const tries = [[i]];
+        for (let j = i + 1; j < rings.length; j++) tries.push([i, j]);
+        for (const pick of tries) {
+          const text = pick.map((x) => rings[x]!.body).join(' · ');
+          const f = fit(text, sp);
+          const cost = f ? f.cost + 0.25 * (pick.length - 1) : Infinity;
+          if (f && (!best || cost < best.cost)) best = { pick, text, len: f.len, cost };
+        }
+      }
+      if (best) {
+        Object.assign(sp, { text: best.text, len: best.len, ids: best.pick.map((x) => rings[x]!.id) });
+        [...best.pick].reverse().forEach((x) => rings.splice(x, 1));
+      }
+    }
+    this.spokes = spokes.filter((sp) => sp.text);
+
+    // The rest go on the rings as one stream, longest first onto the outer
+    // rings (whose scallops are longest), set at the widest ring spacing that
+    // still holds the whole stream.
+    let stream = rings.map((m) => ({ ...m, text: shorten(m.body, MAX_CHARS) }));
+    stream.sort((p, q) => widthAt(q.text, 1, 400, 0) - widthAt(p.text, 1, 400, 0) || p.order - q.order);
+    const omitted: Item[] = [];
+    let result: (ReturnType<WebLayout['setRings']> & { score: number }) | null = null;
+    while (stream.length) {
+      for (let g = T.gap[1]; g >= T.gap[0]; g -= GAP_STEP) {
+        const r = this.setRings(stream, g);
+        if (!r.fits) continue;
+        const score = -Math.max(0, r.ringsAvail - r.ringsUsed - 1) + Math.min(r.lastFill, LAST_RING_FILL) + 0.001 * g;
+        if (!result || score > result.score) result = { ...r, score };
+      }
+      if (result) break;
+      // the oldest leave the web first (they are still in the list)
+      const oldest = stream.reduce((a, b) => (b.order < a.order ? b : a));
+      stream = stream.filter((m) => m !== oldest);
+      omitted.push(oldest);
+    }
+    const full = !result || (result.ringsAvail - result.ringsUsed <= 1 && result.lastFill >= LAST_RING_FILL);
+    return { spokes: this.spokes, result, omitted, full, placed: msgs.length - omitted.length };
   }
 
-  /** A spoke: from clear of the hub ring (and the spider) to just inside the outline. */
-  private spokeStrand(angle: number): Strand {
-    const { cx, cy } = this.hub;
-    const dir = { x: Math.cos(angle), y: Math.sin(angle) };
-    const from = this.hubRadius(angle) + this.type.spokeStart;
-    const to = this.edge(angle) - 6;
-    return new Strand([
-      { x: cx + dir.x * from, y: cy + dir.y * from },
-      { x: cx + dir.x * to, y: cy + dir.y * to },
-    ]);
-  }
-
-  /** The rings, from the inside out, each split into its top and bottom halves. */
-  private ringTracks(angles: number[], rnd: () => number): Track[] {
-    const { ring, ringGap, firstRing, spoke } = this.type;
-    const count = angles.length;
-    const tightest = Math.min(
-      ...Array.from({ length: 72 }, (_, i) => this.edge((i / 72) * TAU) - this.hubRadius((i / 72) * TAU)),
-    );
-    // how far ring letters stop short of each spoke: more than half a spoke's tallest letter
-    const knot = spoke.max * HALF_HEIGHT + 6;
-    const lastAllowed = 1 - (ring * HALF_HEIGHT + 6) / tightest;
-
-    const tracks: Track[] = [];
-    for (let u = (firstRing + ring * HALF_HEIGHT) / tightest; u <= lastAllowed; ) {
-      const top: { mid: number; strand: Strand }[] = [];
-      const bottom: { mid: number; strand: Strand }[] = [];
-      for (let j = 0; j < count; j++) {
-        const a0 = angles[j]!;
-        const a1 = angles[(j + 1) % count]! + (j + 1 === count ? TAU : 0);
-        // the ring's own curve, sagging a little toward the straight line
-        const slack = 0.06 + rnd() * 0.16;
-        const p0 = this.at(a0, u);
-        const p1 = this.at(a1, u);
-        const steps = 48;
-        const points = Array.from({ length: steps + 1 }, (_, i) => {
-          const t = i / steps;
-          const onRing = this.at(a0 + (a1 - a0) * t, u);
-          const straight = { x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t };
-          return { x: onRing.x + (straight.x - onRing.x) * slack, y: onRing.y + (straight.y - onRing.y) * slack };
+  /** The scalloped rings for a ring spacing `g`: each ring's chords in reading order. */
+  private ringsFor(g: number): Chord[][] {
+    const T = this.T;
+    const R = T.ring;
+    const sp = [...this.spokes].sort((p, q) => p.angle - q.angle);
+    const { c } = this;
+    const hSpoke = this.half * T.spoke.size;
+    const hRing = this.half * R.size + 0.5;
+    const need = hSpoke + T.knot;
+    const inner = (a: number) => this.hubRadius(a) + T.freeZone;
+    // rings stay inside the shortest a spoke may be, so every ring crosses every spoke
+    const span = (a: number) => {
+      const r0 = this.hubRadius(a) + T.spokeStart;
+      return r0 + SPOKE_MIN * (this.outline(a) - r0) - (hRing + 6) - inner(a);
+    };
+    let spanMin = Infinity;
+    for (let i = 0; i < 180; i++) spanMin = Math.min(spanMin, span((i / 180) * TAU));
+    // spun from the outside in: ring 0 is the outermost, just inside the spokes' ends
+    const radius = (a: number, k: number) => inner(a) + span(a) * (1 - (k * g) / spanMin);
+    const ringsOut: Chord[][] = [];
+    for (let k = 0; k * g <= spanMin + 0.01; k++) {
+      const chords: Chord[] = [];
+      for (let i = 0; i < sp.length; i++) {
+        const s0 = sp[i]!;
+        const s1 = sp[(i + 1) % sp.length]!;
+        const a0 = s0.angle;
+        const a1 = s1.angle + (i + 1 === sp.length ? TAU : 0);
+        const r0 = radius(a0, k);
+        const r1 = radius(a1, k);
+        // a ring may only hang between two spokes that reach past it
+        const over = hRing + 6;
+        if (r0 + over > s0.r0 + s0.len || r1 + over > s1.r0 + s1.len) continue;
+        const P0 = { x: c.x + Math.cos(a0) * r0, y: c.y + Math.sin(a0) * r0 };
+        const P1 = { x: c.x + Math.cos(a1) * r1, y: c.y + Math.sin(a1) * r1 };
+        const M = { x: (P0.x + P1.x) / 2, y: (P0.y + P1.y) / 2 };
+        const toHub = { x: c.x - M.x, y: c.y - M.y };
+        const l = Math.hypot(toHub.x, toHub.y) || 1;
+        const sag = T.sag * dist(P0, P1);
+        const Q = { x: M.x + (toHub.x / l) * 2 * sag, y: M.y + (toHub.y / l) * 2 * sag };
+        let pts = Array.from({ length: 65 }, (_, j) => {
+          const t = j / 64;
+          const u = 1 - t;
+          return { x: u * u * P0.x + 2 * u * t * Q.x + t * t * P1.x, y: u * u * P0.y + 2 * u * t * Q.y + t * t * P1.y };
         });
-        const whole = new Strand(leftToRight(points));
-        if (whole.length - 2 * knot < ring * 2.5) continue; // too short for even a short word
-        const strand = new Strand(whole.slice(knot, whole.length - knot));
-        const mid = (((a0 + a1) / 2) % TAU + TAU) % TAU;
-        (Math.sin(mid) < 0 ? top : bottom).push({ mid, strand });
+        // Each ring reads in two halves, both from the left: the top half
+        // clockwise, the bottom half anticlockwise, so text never turns more
+        // than 90 degrees from upright.
+        const mid = Math.atan2(Math.sin((a0 + a1) / 2), Math.cos((a0 + a1) / 2));
+        const top = mid < 0;
+        let ends = [s0, s1];
+        if (!top) {
+          pts = pts.reverse();
+          ends = [s1, s0];
+        }
+        const line = new Line(pts);
+        // the knot: ring letters stop where their whole band is clear of the spoke's letters
+        const side = (spk: Spoke, p: Point) => (p.x - c.x) * spk.n.x + (p.y - c.y) * spk.n.y;
+        const midPt = line.pointAt(line.length / 2);
+        const signs = ends.map((spk) => Math.sign(side(spk, midPt)));
+        const clearAt = (e: number, s: number) => {
+          const spk = ends[e]!;
+          const sign = signs[e]!;
+          const p = line.pointAt(s);
+          const t = line.tangentAt(s);
+          const nn = { x: -t.y, y: t.x };
+          return Math.min(
+            sign * side(spk, { x: p.x + nn.x * hRing, y: p.y + nn.y * hRing }),
+            sign * side(spk, { x: p.x - nn.x * hRing, y: p.y - nn.y * hRing }),
+          );
+        };
+        // walk in from each end in 2px steps, then back out in 0.25px steps
+        let from = 0;
+        let to = line.length;
+        while (from < line.length && clearAt(0, from) < need) from += 2;
+        while (from > 0 && clearAt(0, from - 0.25) >= need) from -= 0.25;
+        while (to > from && clearAt(1, to) < need) to -= 2;
+        while (to < line.length && clearAt(1, to + 0.25) >= need) to += 0.25;
+        if (to - from < R.size * 2.2) continue;
+        chords.push({ line, from, to, top, mid });
       }
-      // both halves read left to right: the top from the left going over, the bottom from the left going under
-      top.sort((p, q) => Math.cos(p.mid) - Math.cos(q.mid));
-      bottom.sort((p, q) => Math.cos(p.mid) - Math.cos(q.mid));
-      tracks.push(top.map((s) => s.strand), bottom.map((s) => s.strand));
-      // each ring a slightly different distance from the last, never closer than ringGap
-      u += (ringGap * (1 + rnd() * 0.2)) / tightest;
+      const over = chords.filter((h) => h.top).sort((p, q) => p.mid - q.mid);
+      const under = chords.filter((h) => !h.top).sort((p, q) => q.mid - p.mid);
+      ringsOut.push([...over, ...under]);
     }
-    return tracks.filter((t) => t.length > 0);
+    return ringsOut;
   }
 
-  // ---------- putting messages on it ----------
-
-  /** Lays every message onto the web, or returns null if they don't all fit. */
-  private place(messages: Msg[]): Thread[] | null {
-    const { spoke, ring, nominal } = this.type;
-    const usedSpokes = new Set<Spoke>();
-    // where the next ring message starts: which track, which stretch on it, how far along
-    const cursor = { track: 0, stretch: 0, at: 0 };
-    const between = ring * 1.6; // space between one ring message and the next
-
-    const unit = (a: number) => ({ x: Math.cos(a), y: Math.sin(a) });
-    // How lopsided the spokes would be with this one added: 0 = perfectly balanced.
-    const lopsided = (angle: number) => {
-      const all = [...usedSpokes].map((s) => unit(s.angle)).concat(unit(angle));
-      return Math.hypot(all.reduce((s, v) => s + v.x, 0), all.reduce((s, v) => s + v.y, 0)) / all.length;
-    };
-    // How far a spoke is from the nearest one already written on, as a share of a third of a turn.
-    const apart = (angle: number) => {
-      if (usedSpokes.size === 0) return 1;
-      const nearest = Math.min(
-        ...[...usedSpokes].map((s) => {
-          const d = Math.abs(angle - s.angle) % TAU;
-          return Math.min(d, TAU - d);
-        }),
-      );
-      return Math.min(1, nearest / (TAU / 3));
-    };
-
-    const threads: Thread[] = [];
-    for (const m of messages) {
-      const text = shorten(m.body, MAX_CHARS);
-      const natural = rulers.spoke.widthInEms(text);
-
-      // A spoke, if one is free and the whole message fits on it at the smallest spoke size.
-      const fits = (s: Spoke) =>
-        natural * spoke.min * 1.05 <= s.strand.length &&
-        (this.wide || Math.abs(Math.sin(s.angle)) <= STEEP || text.length <= STEEP_MAX_CHARS);
-      const free = this.spokes.filter((s) => !usedSpokes.has(s) && fits(s));
-      if (free.length > 0) {
-        const ideal = natural * nominal * 1.05;
-        const cost = (s: Spoke) =>
-          Math.abs(Math.log(s.strand.length / ideal)) +
-          (usedSpokes.size < 3 ? 1.0 * lopsided(s.angle) : 1.2 * (1 - apart(s.angle)));
-        const s = free.reduce((best, c) => (cost(c) < cost(best) ? c : best));
-        usedSpokes.add(s);
-        // the landing page's rule: size the text to fill its spoke, within the spoke range
-        const room = s.strand.length;
-        const size = clamp(room / (natural * 1.05), spoke.min, spoke.max);
-        const drawn = Math.min(room, natural * size * SPOKE_SPREAD);
-        const points = leftToRight(s.strand.slice(0, drawn));
-        threads.push({ id: m.id, kind: 'spoke', size, parts: [{ text, points, d: pathOf(points), length: drawn }] });
-        continue;
+  /** Sets the stream of ring messages into the rings, like justified lines in a book. */
+  private setRings(stream: Item[], g: number) {
+    // the rings depend only on the spokes, the sizes and the spacing: build each set once
+    const key = `${this.scale}|${this.T.ring.size}|${g}|${this.spokes.map((s) => s.len.toFixed(1)).join(',')}`;
+    if (!this.ringCache.has(key)) this.ringCache.set(key, this.ringsFor(g));
+    const rings = this.ringCache.get(key)!;
+    const R = this.T.ring;
+    const W = (t: string, tr: number) => widthAt(t, R.size, 400, tr);
+    type Token = { text: string; id: string | null; sep?: boolean; first?: boolean; last?: boolean };
+    const tokens: Token[] = [];
+    stream.forEach((m, i) => {
+      if (i) tokens.push({ text: '·', id: null, sep: true });
+      (m.text ?? m.body)
+        .split(' ')
+        .forEach((w, j, all) => tokens.push({ text: w, id: m.id, first: j === 0, last: j === all.length - 1 }));
+    });
+    const parts: Run[] = [];
+    let i = 0;
+    let ringsUsed = 0;
+    let lastFill = 0;
+    for (let ri = 0; ri < rings.length; ri++) {
+      const ring = rings[ri]!;
+      if (i >= tokens.length) break;
+      ringsUsed++;
+      let cap = 0;
+      let used = 0;
+      const widest = Math.max(...ring.map((h) => h.to - h.from), 0);
+      for (let ci = 0; ci < ring.length; ci++) {
+        const ch = ring[ci]!;
+        const avail = ch.to - ch.from;
+        cap += avail;
+        if (i >= tokens.length) continue;
+        const nextCh = ring[ci + 1] ?? rings[ri + 1]?.[0];
+        const line: Token[] = [];
+        while (i < tokens.length) {
+          const tok = tokens[i]!;
+          if (!line.length && tok.sep) {
+            i++; // a spoke already separates them
+            continue;
+          }
+          if (tok.sep && nextCh) {
+            // A message that would fit whole in the next scallop starts there
+            // rather than being split across a spoke, if this one is mostly full.
+            let j = i + 1;
+            const msg: string[] = [];
+            while (j < tokens.length && !tokens[j]!.sep) msg.push(tokens[j++]!.text);
+            const lineText = line.map((t) => t.text).join(' ');
+            const whole = msg.join(' ');
+            if (
+              W(`${lineText} · ${whole}`, R.track[0]) > avail &&
+              W(whole, R.track[0]) <= nextCh.to - nextCh.from &&
+              W(lineText, R.track[1] * 0.8) >= avail
+            ) {
+              break;
+            }
+          }
+          const cand = [...line, tok].map((t) => t.text).join(' ');
+          if (W(cand, R.track[0]) <= avail) {
+            line.push(tok);
+            i++;
+            continue;
+          }
+          if (!line.length && W(tok.text, R.track[0]) > widest) {
+            // one unbroken word longer than any scallop on this ring: cut it, and end that message here
+            line.push({ ...tok, text: cutWord(tok.text, avail, R.size, 400, R.track[0]) });
+            const id = tok.id;
+            i++;
+            while (i < tokens.length && tokens[i]!.id === id) i++;
+          }
+          break;
+        }
+        // never strand a message's short first or last word alone across a spoke
+        const content = line.filter((t) => !t.sep).length;
+        if (i < tokens.length && content >= 2) {
+          const end = line[line.length - 1]!;
+          const next = tokens[i]!;
+          if (end.first && !end.last && chars(end.text) <= 3) {
+            line.pop();
+            i--;
+          } else if (next.last && !next.first && chars(next.text) <= 3 && end.id === next.id) {
+            line.pop();
+            i--;
+          }
+        }
+        // a lone short word that starts a message ("the" of "the money") waits for the next scallop
+        if (i < tokens.length && line.length === 1 && line[0]!.first && !line[0]!.last && chars(line[0]!.text) <= 3) {
+          line.pop();
+          i--;
+        }
+        if (!line.length) continue;
+        const text = line.map((t) => t.text).join(' ');
+        const n = chars(text);
+        const w0 = W(text, 0);
+        const justified = i < tokens.length && (avail - w0) / (R.size * Math.max(1, n - 1)) <= R.track[1];
+        const length = justified ? avail : Math.min(avail, W(text, R.base));
+        const points = ch.line.slice(ch.from, ch.from + length);
+        const ids = [...new Set(line.map((t) => t.id).filter((id): id is string => id !== null))];
+        parts.push({ text, points, d: pathOf(points), length, size: R.size, weight: 400, kind: 'ring', ids });
+        used += length;
       }
-
-      // Otherwise the rings: continue where the last ring message ended.
-      const parts = this.onRings(text, cursor, between);
-      if (!parts) return null; // the web is full
-      threads.push({ id: m.id, kind: 'ring', size: ring, parts });
+      lastFill = cap ? used / cap : 0;
     }
-    return threads;
-  }
-
-  /**
-   * Writes a message along the rings from `cursor`, word by word, carrying on
-   * across the next spoke (and onto the next track) whenever a stretch is
-   * full. Moves the cursor past it. Returns null if the rings run out.
-   */
-  private onRings(text: string, cursor: { track: number; stretch: number; at: number }, between: number): Part[] | null {
-    const size = this.type.ring;
-    const width = (t: string) => rulers.ring.widthInEms(t) * size;
-    const words = text.split(' ');
-    const parts: Part[] = [];
-    let { track, stretch, at } = cursor;
-    let run: string[] = [];
-
-    // `fill`: this piece is not the end of the message, so spread its letters
-    // to reach the end of the stretch (within RING_SPREAD), leaving no hole
-    // before the sentence carries on past the spoke.
-    const close = (fill: boolean) => {
-      const strand = this.tracks[track]![stretch]!;
-      const words = run.join(' ');
-      const natural = width(words);
-      const length = fill ? Math.max(natural, Math.min(strand.length - at, natural * RING_SPREAD)) : natural;
-      const points = strand.slice(at, at + length);
-      parts.push({ text: words, points, d: pathOf(points), length });
-      at += length;
-      run = [];
-    };
-    const nextStretch = () => {
-      stretch += 1;
-      at = 0;
-      if (stretch >= this.tracks[track]!.length) {
-        track += 1;
-        stretch = 0;
-      }
-      return track < this.tracks.length;
-    };
-
-    for (let k = 0; k < words.length; ) {
-      if (track >= this.tracks.length) return null;
-      const strand = this.tracks[track]![stretch]!;
-      const tryRun = [...run, words[k]!].join(' ');
-      if (at + width(tryRun) <= strand.length) {
-        run.push(words[k]!);
-        k++;
-        continue;
-      }
-      if (run.length > 0) {
-        close(true); // this stretch is full: carry on past the spoke
-        if (!nextStretch()) return null;
-      } else if (at === 0) {
-        // a single word longer than a whole stretch: cut it, and end the message there
-        run.push(cutWord(words[k]!, strand.length, size));
-        k = words.length;
-      } else if (!nextStretch()) {
-        return null;
-      }
-    }
-    if (run.length > 0) close(false);
-    // the next message starts a little further on, or on the next stretch if this one is nearly full
-    at += between;
-    cursor.track = track;
-    cursor.stretch = stretch;
-    cursor.at = at;
-    if (track < this.tracks.length && at >= this.tracks[track]![stretch]!.length) {
-      cursor.at = 0;
-      cursor.stretch += 1;
-      if (cursor.stretch >= this.tracks[track]!.length) {
-        cursor.track += 1;
-        cursor.stretch = 0;
-      }
-    }
-    return parts;
+    const ringsAvail = rings.filter((r) => r.length > 0).length;
+    return { fits: i >= tokens.length, parts, ringsUsed, ringsAvail, lastFill };
   }
 }
