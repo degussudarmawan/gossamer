@@ -94,11 +94,9 @@ export default function RoomWeb({ width, height, seed, messages, onPick }: Props
   const total = runs.length;
   const { cx, cy, rx, ry } = layout.hub;
 
-  // The runs that belong to the newest message: those are what the spider writes when the room opens.
-  const newestRuns = useMemo(() => {
-    const newest = [...messages].sort((p, q) => q.position - p.position)[0]?.id;
-    return newest ? runs.filter((r) => r.ids.includes(newest)).length : 0;
-  }, [messages, runs]);
+  // The newest message, and its words: those are what the spider writes.
+  const newest = useMemo(() => [...messages].sort((p, q) => q.position - p.position)[0]?.id ?? null, [messages]);
+  const newestRuns = useMemo(() => (newest ? runs.filter((r) => r.ids.includes(newest)).length : 0), [newest, runs]);
 
   // `written` counts runs laid down so far: 3.4 means three done and the
   // fourth 40% written. `done` is its whole part, kept in state so React draws
@@ -113,15 +111,17 @@ export default function RoomWeb({ width, height, seed, messages, onPick }: Props
 
   // The newest message's words are written last, so the spider can be seen writing them.
   const order = useMemo(() => {
-    const newest = [...messages].sort((p, q) => q.position - p.position)[0]?.id;
     const rest = runs.filter((r) => !newest || !r.ids.includes(newest));
     return [...rest, ...runs.filter((r) => newest && r.ids.includes(newest))];
-  }, [messages, runs]);
+  }, [newest, runs]);
 
-  const opened = useRef(false);
+  // When the room opens, and whenever a new message arrives, the spider writes
+  // the newest message. (A full web doesn't grow: the new message takes over an
+  // old strand, so this follows which message is newest, not how many runs there are.)
+  const writtenFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!opened.current && total > 0) {
-      opened.current = true;
+    if (total > 0 && writtenFor.current !== newest) {
+      writtenFor.current = newest;
       const start = Math.max(0, total - Math.max(1, newestRuns));
       written.set(start);
       setDone(start);
@@ -146,7 +146,7 @@ export default function RoomWeb({ width, height, seed, messages, onPick }: Props
       run.stop();
       goingHome?.stop();
     };
-  }, [total, still, written, home, newestRuns]);
+  }, [total, still, written, home, newest, newestRuns]);
 
   // While writing, the spider is the tip of the words; between runs it walks
   // to the next one; then it walks back to its ring. Its group is centred on
