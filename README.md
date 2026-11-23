@@ -169,9 +169,66 @@ branch before expecting room screens in a backend-only branch's image.
 
 ## Deployment
 
-A recommended initial setup is a Node web service on Render, managed PostgreSQL, and
-Resend. The Node service serves both the built frontend and API under one HTTPS origin.
-Local testing and hosted production must use separate databases and secrets.
+The repository includes `render.yaml` for an invited pilot: one Docker web service serving
+the frontend and API, plus a separate managed PostgreSQL database. Local Docker remains
+the development sandbox and must never use the live database or its authentication secret.
+
+### First release on Render
+
+1. Integrate the reviewed frontend and backend, including the latest intended frontend
+   commits. Run lint, type checks, tests, the production build, and the Docker smoke check.
+   Commit and push that combined release to GitHub. A local commit alone is not published.
+2. Create a Render account and connect the GitHub account that owns this repository.
+   Choose **New > Blueprint**, select this repository and the combined release branch,
+   and use the root `render.yaml`. Do not select an older `main` that lacks the release.
+3. Review the resource names, Singapore region, and Render's displayed monthly cost before
+   applying. The file selects paid web/database plans and 1 GB database storage. It does
+   not provision anything until applied. Free PostgreSQL is unsuitable for durable pilot
+   data because it expires after 30 days.
+4. Enter `RESEND_API_KEY`, `MAIL_FROM`, and `SIGN_IN_ALLOWLIST` privately in Render's
+   prompted fields. Use a verified Resend sending domain to email invited friends;
+   `onboarding@resend.dev` is limited to your own Resend account email. Include both
+   test users in the comma-separated allowlist. Never put these settings in frontend code.
+5. Apply the Blueprint. Render builds the image, runs `node dist/db/migrate.js`, and starts
+   the app. The readiness check must pass before the release is considered healthy.
+   The initial Blueprint application creates resources and launches the first deployment;
+   later code pushes do not deploy automatically.
+6. Open the HTTPS URL shown in Render. Test sign-in with two real inboxes, create a room,
+   join through its invite link, send/read a message, sign out, and sign back in. Check
+   a nonmember cannot access the room. Redeploy the same release and verify saved messages.
+7. Confirm database recovery options in Render and perform a restore exercise into a
+   separate database before relying on the service for irreplaceable messages.
+
+`DATABASE_URL` is linked to the database automatically, and `AUTH_SECRET` is generated
+by Render. External database connections are disabled; the app uses Render's private
+network. The app uses Render's assigned `RENDER_EXTERNAL_URL` as its HTTPS origin.
+If you attach a custom website domain, explicitly set `PUBLIC_ORIGIN` to that origin
+(no trailing slash), and use it consistently in browser and invite links.
+
+For logs, use the web service's **Logs** tab (API/startup/migrations as applicable) and
+the database's own dashboard. Production codes are sent by email, never printed in logs.
+Database data is stored in managed PostgreSQL, not inside the web container.
+
+### Develop while the pilot stays live
+
+Keep everyday work on feature branches and test with `pnpm dev` or local Compose.
+The Blueprint disables automatic code deployment and preview environments. Push and
+review changes, wait for GitHub checks, then deploy the exact reviewed commit manually
+from Render. Record that commit as the release. When moving the service to `main`, first
+merge the complete release there, update the linked branch, and enable required GitHub
+checks. CI configuration alone does not enforce branch protection.
+
+Keep migrations compatible with the version still serving traffic. A code rollback does
+not undo database migrations: roll back code only when the current schema supports it,
+otherwise prepare a forward fix. Keep the same `AUTH_SECRET` across normal deployments
+so existing sessions stay valid.
+
+References: [Render Blueprints](https://render.com/docs/blueprint-spec),
+[deployment lifecycle](https://render.com/docs/deploys),
+[free resource limits](https://render.com/docs/free), and
+[Resend domain setup](https://resend.com/docs/dashboard/domains/introduction).
+
+### Hosting without the Blueprint
 
 The same Dockerfile can build a hosted image. Its default `NODE_ENV=production` requires
 the settings below. Use managed PostgreSQL, inject secrets at runtime, and run
@@ -196,7 +253,8 @@ Required production settings:
 - `NODE_ENV=production`
 - `DATABASE_URL`: the provider's PostgreSQL connection string
 - `AUTH_SECRET`: a new random secret containing at least 32 characters
-- `PUBLIC_ORIGIN`: the exact HTTPS website origin, without a trailing slash
+- `PUBLIC_ORIGIN`: the exact HTTPS website origin, without a trailing slash;
+  optional on Render when using its assigned `RENDER_EXTERNAL_URL`
 - `MAIL_MODE=resend`, `RESEND_API_KEY`, and `MAIL_FROM`
 - `SIGN_IN_ALLOWLIST`: comma-separated invited email addresses for the initial pilot
 

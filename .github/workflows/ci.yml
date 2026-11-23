@@ -1,11 +1,11 @@
 name: CI
 
-# Runs on every pull request and on main, so a change can't be merged (or land)
-# without passing lint, type checks and a production build.
+# Run checks on each branch and pull request. Require these checks in GitHub's
+# branch protection settings before using main as the release branch.
 on:
   pull_request:
   push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   check:

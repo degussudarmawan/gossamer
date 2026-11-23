@@ -30,3 +30,15 @@ it('rejects invalid ports/URLs without echoing secrets', () => {
     expect(() => loadConfig({ PUBLIC_ORIGIN: origin })).toThrow();
   }
 });
+
+it('uses the assigned Render HTTPS origin in production and lets a custom domain override it', () => {
+  const render = { ...live, PUBLIC_ORIGIN: '', RENDER_EXTERNAL_URL: 'https://gossamer-pilot.onrender.com' };
+  expect(loadConfig(render).publicOrigin).toBe(render.RENDER_EXTERNAL_URL);
+  expect(loadConfig({ ...render, PUBLIC_ORIGIN: 'https://gossamer.example' }).publicOrigin).toBe('https://gossamer.example');
+  expect(loadConfig({ RENDER_EXTERNAL_URL: render.RENDER_EXTERNAL_URL }).publicOrigin).toBeUndefined();
+  for (const origin of ['http://example.com', 'https://example.com/', 'https://name:secret@example.com']) {
+    expect(() => loadConfig({ ...render, RENDER_EXTERNAL_URL: origin })).toThrow();
+  }
+  // A bad explicit origin must not silently fall back to the provider hostname.
+  expect(() => loadConfig({ ...render, PUBLIC_ORIGIN: 'http://example.com' })).toThrow();
+});

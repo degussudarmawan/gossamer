@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://render.com/schema/render.yaml.json
+# Paid invited-pilot infrastructure. Review Render's cost estimate before applying.
+# Use the reviewed release branch when creating the Blueprint; no branch is hardcoded.
+previews:
+  generation: "off"
+
+services:
+  - type: web
+    name: gossamer
+    runtime: docker
+    plan: 0.5c-512mb
+    region: singapore
+    numInstances: 1
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: "off"
+    preDeployCommand: node dist/db/migrate.js
+    healthCheckPath: /api/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gossamer-db
+          property: connectionString
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: MAIL_MODE
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: SIGN_IN_ALLOWLIST
+        sync: false
+      # PUBLIC_ORIGIN defaults to Render's assigned HTTPS URL.
+      # Set it in the dashboard if you attach and use a custom website domain.
+
+databases:
+  - name: gossamer-db
+    plan: 0.1c-256mb
+    region: singapore
+    postgresMajorVersion: "17"
+    databaseName: gossamer
+    user: gossamer
+    diskSizeGB: 1
+    ipAllowList: []

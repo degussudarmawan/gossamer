@@ -38,8 +38,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     mail = { mode, apiKey: env.RESEND_API_KEY, from: env.MAIL_FROM };
   }
-  const publicOrigin = env.PUBLIC_ORIGIN || undefined;
-  if (production && !publicOrigin) throw new ConfigError('PUBLIC_ORIGIN is required in production');
+  // Render assigns the hostname at creation. An explicit origin takes precedence for custom domains.
+  const publicOrigin = env.PUBLIC_ORIGIN || (production ? env.RENDER_EXTERNAL_URL : undefined) || undefined;
+  if (production && !publicOrigin) throw new ConfigError('PUBLIC_ORIGIN or RENDER_EXTERNAL_URL is required in production');
   if (publicOrigin) {
     let valid = false;
     try {
