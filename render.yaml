@@ -16,8 +16,8 @@ services:
     dockerContext: .
     autoDeployTrigger: "off"
     # Free services have no pre-deploy command, so each start applies pending migrations
-    # first. A migration failure stops the start; exec hands shutdown signals to Node.
-    dockerCommand: /bin/bash -c "node dist/db/migrate.js && exec node dist/index.js"
+    # first. One Node entry point avoids provider-specific shell quoting.
+    dockerCommand: node dist/start-hosted.js
     # Startup already refuses to listen without a migrated database. This check avoids
     # querying Neon every few seconds, so Neon can sleep and save its free compute hours.
     healthCheckPath: /api/health
