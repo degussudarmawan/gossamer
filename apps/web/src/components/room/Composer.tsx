@@ -2,7 +2,7 @@ import { useRef, useState, type FormEvent } from 'react';
 import { explain } from '../../lib/explain';
 import { ROOM_LIMITS } from '../../lib/RoomApi';
 import { roomApi } from '../../services';
-import { area, field, note, primary } from '../ui';
+import { area, note, primary } from '../ui';
 
 type Props = {
   roomId: string;
@@ -59,7 +59,8 @@ export default function Composer({ roomId, prompt, onSent }: Props) {
       <textarea
         id="message-body"
         required
-        autoFocus
+        // the Sheet puts the cursor here when it opens (React's autoFocus runs before the dialog is open)
+        data-autofocus
         rows={5}
         maxLength={ROOM_LIMITS.body}
         placeholder="write something they’ll want to keep"
@@ -67,7 +68,7 @@ export default function Composer({ roomId, prompt, onSent }: Props) {
         onChange={(e) => setBody(e.target.value)}
         className={area}
       />
-      {left <= 200 && <p className={`-mt-2 text-right ${note}`}>{left} left</p>}
+      {left <= 200 && <p className={`-mt-2 text-right ${note}`}>{left} characters left</p>}
 
       <label htmlFor="message-signature" className="sr-only">
         your name (optional)
@@ -76,10 +77,11 @@ export default function Composer({ roomId, prompt, onSent }: Props) {
         id="message-signature"
         maxLength={ROOM_LIMITS.signature}
         autoComplete="off"
-        placeholder="your name (optional)"
+        placeholder="sign it, if you like"
         value={signature}
         onChange={(e) => setSignature(e.target.value)}
-        className={`${field} text-left text-base`}
+        // same size as the note above it: the signature is a sign-off, not a heading
+        className="w-full border-b border-ink-soft/50 bg-transparent px-3 py-2 text-base text-ink outline-none placeholder:text-ink-soft/50 focus:border-ink"
       />
 
       <div className="flex items-center justify-between gap-4">

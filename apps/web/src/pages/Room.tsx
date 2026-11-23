@@ -7,7 +7,7 @@ import MessageList from '../components/room/MessageList';
 import OwnerTools from '../components/room/OwnerTools';
 import RoomWeb from '../components/RoomWeb';
 import Sheet from '../components/Sheet';
-import { note, primary, quiet } from '../components/ui';
+import { action, note, quiet } from '../components/ui';
 import { useElementSize } from '../hooks/useElementSize';
 import { useRoom } from '../hooks/useRoom';
 import { WebLayout } from '../web/WebLayout';
@@ -65,7 +65,7 @@ export default function Room() {
   if (status !== 'ready' || !room) {
     return (
       <Page>
-        <h1 className="font-hand text-display">{status === 'missing' ? 'this room isn’t available' : 'something went wrong'}</h1>
+        <h1 className="font-hand text-display">{status === 'missing' ? 'this room isn’t available' : 'we couldn’t open this room'}</h1>
         <p className={note}>
           {status === 'missing' ? 'you may need the link from whoever invited you.' : 'check your connection and try again.'}
         </p>
@@ -78,25 +78,36 @@ export default function Room() {
 
   const hub = WebLayout.hubFor(width, height);
   const wide = width >= 1024;
+  // The landing page's title size (--text-display in index.css), in px for this width.
+  const display = Math.min(44, Math.max(22.4, 16 + 0.022 * width));
   const count = messages.length;
 
-  const buttons = (
-    <nav className="pointer-events-auto flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
-      {room.closed ? (
-        <p className={note}>closed</p>
-      ) : (
-        <button type="button" onClick={() => setPanel('write')} className={`${primary} bg-(--cloth)`}>
-          write
+  // The line above the actions: what the owner asked people to write, or, once
+  // the room is closed, that it is closed. Nothing when there is neither.
+  const caption = room.closed
+    ? count > 0
+      ? 'closed for now. every note can still be read.'
+      : 'closed for now.'
+    : room.prompt;
+
+  // Each panel's title repeats the words that opened it.
+  const ownerLabel = room.closed ? 'reopen' : 'invite someone';
+
+  const actions = (
+    <nav aria-label="this room" className="pointer-events-auto flex flex-wrap items-center justify-center gap-x-5">
+      {!room.closed && (
+        <button type="button" onClick={() => setPanel('write')} className={action}>
+          leave a note
         </button>
       )}
       {count > 0 && (
-        <button type="button" onClick={() => setPanel('read')} className={quiet}>
-          read {count}
+        <button type="button" onClick={() => setPanel('read')} className={action}>
+          read in full
         </button>
       )}
       {room.isOwner && (
-        <button type="button" onClick={() => setPanel('invite')} className={quiet}>
-          invite
+        <button type="button" onClick={() => setPanel('invite')} className={action}>
+          {ownerLabel}
         </button>
       )}
     </nav>
@@ -109,23 +120,41 @@ export default function Room() {
       <Wordmark className="absolute top-8 left-6 z-10" />
       <Corner className="absolute top-7 right-6 z-10" />
 
-      {/* The title sits inside the hub ring, sized so no word has to break. */}
+      {/* The title sits inside the hub at the landing page's title size, smaller
+          only if its longest word wouldn't fit across. On wide screens the hub is
+          an oval, so the title is kept narrower there to hold a third line clear
+          of the curve; on phones it is nearly round. */}
       <h1
         className="pointer-events-none absolute z-10 line-clamp-3 -translate-x-1/2 -translate-y-1/2 text-center font-hand leading-tight"
         style={{
           left: hub.cx,
           top: hub.cy,
-          width: hub.rx * 1.6,
-          fontSize: WebLayout.titleSize(room.title, hub, wide ? 36 : 18, 1.55),
+          width: hub.rx * (wide ? 1.5 : 1.6),
+          fontSize: WebLayout.titleSize(room.title, hub, display, wide ? 1.45 : 1.55),
         }}
       >
         {room.title}
       </h1>
 
-      {/* the web fills the screen; the buttons sit below it */}
-      <div className="absolute inset-x-0 bottom-6 z-10 px-6">{buttons}</div>
+      {/* An empty room says so under its ring, the way the landing page captions its title. */}
+      {count === 0 && !room.closed && (
+        <p
+          className={`pointer-events-none absolute z-10 w-max max-w-[calc(100vw-3rem)] -translate-x-1/2 text-center ${note}`}
+          style={{ left: hub.cx, top: hub.cy + hub.ry + (wide ? 28 : 20) }}
+        >
+          no notes yet. the first one starts the web.
+        </p>
+      )}
 
-      <Sheet open={panel === 'write'} onClose={close} title="write">
+      {/* The web fills the screen; below it, as at the end of the landing page,
+          one line of caption and then the ways forward, all in gold. The web keeps
+          84px (96px on phones) clear down here, and this block stays inside it. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 grid justify-items-center gap-1 px-6 text-center lg:bottom-5">
+        {caption && <p className={`line-clamp-2 max-w-xl lg:line-clamp-1 lg:max-w-2xl ${note}`}>{caption}</p>}
+        {actions}
+      </div>
+
+      <Sheet open={panel === 'write'} onClose={close} title="leave a note">
         <Composer
           roomId={room.id}
           prompt={room.prompt}
@@ -136,12 +165,12 @@ export default function Room() {
         />
       </Sheet>
 
-      <Sheet open={panel === 'read'} onClose={close} title={count === 1 ? '1 message' : `${count} messages`}>
+      <Sheet open={panel === 'read'} onClose={close} title={count === 1 ? 'one note' : `${count} notes`}>
         <MessageList roomId={room.id} messages={messages} isOwner={room.isOwner} highlighted={highlighted} onRemoved={refresh} />
       </Sheet>
 
       {room.isOwner && (
-        <Sheet open={panel === 'invite'} onClose={close} title="your room">
+        <Sheet open={panel === 'invite'} onClose={close} title={room.closed ? 'closed for now' : ownerLabel}>
           <OwnerTools room={room} inviteCode={inviteCode} onInvite={setInviteCode} onRoom={setRoom} />
         </Sheet>
       )}
