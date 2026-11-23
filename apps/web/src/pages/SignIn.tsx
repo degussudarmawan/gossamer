@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react';
-import { Navigate, useNavigate } from 'react-router';
+import { Navigate, useLocation, useNavigate } from 'react-router';
 import { Corner, HelpLink, Wordmark } from '../components/Chrome';
+import { field, primary, quiet } from '../components/ui';
 import { ApiError } from '../lib/ApiClient';
+import { nextPath } from '../lib/navigation';
 import { authApi } from '../services';
 import { useSession } from '../session';
 
@@ -17,15 +19,11 @@ function explain(err: unknown) {
   return 'something went wrong on our side. try again in a moment.';
 }
 
-const field =
-  'w-full border-b border-ink-soft/60 bg-transparent py-2 text-center text-xl text-ink outline-none placeholder:text-ink-soft/50 focus:border-ink';
-const primary =
-  'cursor-pointer rounded-full border border-ink px-6 py-2 text-ink transition-colors hover:bg-ink hover:text-(--cloth) disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink';
-const quiet = 'cursor-pointer text-sm font-medium text-ink-soft underline decoration-1 underline-offset-4';
-
 export default function SignIn() {
   const { user, loading, signedIn } = useSession();
   const navigate = useNavigate();
+  // where the person was headed before they were asked to sign in
+  const after = nextPath(useLocation().search);
   const [step, setStep] = useState<'email' | 'code'>('email');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -33,7 +31,7 @@ export default function SignIn() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  if (!loading && user) return <Navigate to="/" replace />;
+  if (!loading && user) return <Navigate to={after} replace />;
 
   // Runs one request, with the buttons disabled meanwhile and any failure shown in plain words.
   const attempt = async (work: () => Promise<void>) => {
@@ -63,7 +61,7 @@ export default function SignIn() {
   const verify = (value: string) =>
     void attempt(async () => {
       signedIn(await authApi.verifyCode(email, value));
-      void navigate('/', { replace: true });
+      void navigate(after, { replace: true });
     });
 
   const typeCode = (raw: string) => {

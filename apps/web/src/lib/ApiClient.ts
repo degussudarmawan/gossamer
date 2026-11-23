@@ -21,8 +21,20 @@ export class ApiClient {
   }
 
   post<T>(path: string, body: unknown = {}): Promise<T> {
+    return this.sendJson<T>('POST', path, body);
+  }
+
+  patch<T>(path: string, body: unknown): Promise<T> {
+    return this.sendJson<T>('PATCH', path, body);
+  }
+
+  delete<T>(path: string): Promise<T> {
+    return this.send<T>(path, { method: 'DELETE' });
+  }
+
+  private sendJson<T>(method: string, path: string, body: unknown): Promise<T> {
     return this.send<T>(path, {
-      method: 'POST',
+      method,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });

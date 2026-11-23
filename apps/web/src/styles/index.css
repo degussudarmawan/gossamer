@@ -77,6 +77,17 @@
     1100px;
 }
 
+/* A soft darkening toward the edges, so the middle of the cloth reads as lit
+   and the page has some depth. Sits behind all content, above the texture. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 45%, rgb(0 0 0 / 0.22) 100%);
+}
+
 @layer base {
   body {
     min-height: 100dvh;
