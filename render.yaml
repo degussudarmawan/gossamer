@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=https://render.com/schema/render.yaml.json
-# Paid invited-pilot infrastructure. Review Render's cost estimate before applying.
-# Use the reviewed release branch when creating the Blueprint; no branch is hardcoded.
+# Free invited-pilot infrastructure: one Render Free web service plus an external
+# Neon Free PostgreSQL database. Free services sleep after 15 idle minutes and take
+# about a minute to wake. Use the reviewed release branch; no branch is hardcoded.
 previews:
   generation: "off"
 
@@ -8,23 +9,27 @@ services:
   - type: web
     name: gossamer
     runtime: docker
-    plan: 0.5c-512mb
+    plan: free
     region: singapore
     numInstances: 1
     dockerfilePath: ./Dockerfile
     dockerContext: .
     autoDeployTrigger: "off"
-    preDeployCommand: node dist/db/migrate.js
-    healthCheckPath: /api/ready
+    # Free services have no pre-deploy command, so each start applies pending migrations
+    # first. A migration failure stops the start; exec hands shutdown signals to Node.
+    dockerCommand: /bin/bash -c "node dist/db/migrate.js && exec node dist/index.js"
+    # Startup already refuses to listen without a migrated database. This check avoids
+    # querying Neon every few seconds, so Neon can sleep and save its free compute hours.
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: "10000"
+      # Neon's Direct (non-pooled) connection string. Set sslmode=verify-full;
+      # preserve the other connection parameters supplied by Neon.
       - key: DATABASE_URL
-        fromDatabase:
-          name: gossamer-db
-          property: connectionString
+        sync: false
       - key: AUTH_SECRET
         generateValue: true
       - key: MAIL_MODE
@@ -37,13 +42,3 @@ services:
         sync: false
       # PUBLIC_ORIGIN defaults to Render's assigned HTTPS URL.
       # Set it in the dashboard if you attach and use a custom website domain.
-
-databases:
-  - name: gossamer-db
-    plan: 0.1c-256mb
-    region: singapore
-    postgresMajorVersion: "17"
-    databaseName: gossamer
-    user: gossamer
-    diskSizeGB: 1
-    ipAllowList: []

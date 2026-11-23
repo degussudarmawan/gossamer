@@ -169,9 +169,23 @@ branch includes the private-room screens and production backend together.
 
 ## Deployment
 
-The repository includes `render.yaml` for an invited pilot: one Docker web service serving
-the frontend and API, plus a separate managed PostgreSQL database. Local Docker remains
-the development sandbox and must never use the live database or its authentication secret.
+The repository includes `render.yaml` for a free invited pilot: one Render Free Docker web
+service serving the frontend and API, with PostgreSQL hosted separately on Neon Free.
+Hosting costs $0 per month while usage stays within the free limits; the domain is billed
+separately. Local Docker remains the development sandbox and must never use the live
+database or its authentication secret.
+
+Free-tier trade-offs:
+
+- Render spins the service down after 15 minutes without traffic. The next visitor waits
+  about a minute while it wakes. Render may also restart Free services at any time.
+- Neon allows 1 GB of storage and 100 CU-hours of compute per project per month. Its database
+  sleeps after 5 idle minutes and wakes on the next query. Monitor usage in Neon to stay
+  within the free allowances.
+- Neon Free restore history is limited to 6 hours or 1 GB of data changes, with no scheduled
+  backups. Export the data yourself (see below) before relying on it for irreplaceable messages.
+- Resend Free sends up to 100 emails per day.
+- Render's free PostgreSQL is not used: it expires 30 days after creation.
 
 ### First release on Render
 
@@ -179,36 +193,51 @@ the development sandbox and must never use the live database or its authenticati
    frontend with the production backend; ongoing design revisions stay on feature branches.
    Run lint, type checks, tests, the production build, and the Docker smoke check before
    publishing any new release. A local commit alone is not published.
-2. Create a Render account and connect the GitHub account that owns this repository.
+2. Create a Neon Free project with PostgreSQL 17 in **AWS Asia Pacific (Singapore)**, the
+   region nearest the Render service. Open **Connect**, turn **Connection pooling** off,
+   and copy the Direct connection string (its host has no `-pooler`). Migrations need a
+   direct connection in this setup. Change `sslmode=require` to `sslmode=verify-full`,
+   keeping any other connection parameters unchanged. Copy the URL only, without a
+   `psql` prefix or surrounding quotes. It contains a password; paste it only into Render.
+3. Create a Render account and connect the GitHub account that owns this repository.
    Choose **New > Blueprint**, select this repository and the `release/pilot` branch,
    and use the root `render.yaml`. Do not select an older `main` that lacks the release.
-3. Review the resource names, Singapore region, and Render's displayed monthly cost before
-   applying. The file selects paid web/database plans and 1 GB database storage. It does
-   not provision anything until applied. Free PostgreSQL is unsuitable for durable pilot
-   data because it expires after 30 days.
-4. Enter `RESEND_API_KEY` and `SIGN_IN_ALLOWLIST` privately in Render's prompted fields.
+4. Enter `DATABASE_URL` (the edited Neon string), `RESEND_API_KEY` and `SIGN_IN_ALLOWLIST`
+   privately in Render's prompted fields. Render prompts for these only on first creation.
    The sender is already set to `Gossamer <login@gossamer.blog>` using the verified domain.
    The allowlist contains the email addresses permitted to sign in for this invited pilot;
    include both test users, separated by commas. Never put the API key in frontend code.
-5. Apply the Blueprint. Render builds the image, runs `node dist/db/migrate.js`, and starts
-   the app. The readiness check must pass before the release is considered healthy.
-   The initial Blueprint application creates resources and launches the first deployment;
-   later code pushes do not deploy automatically.
+5. Confirm that Render shows the **Free** instance type and no database, then apply. Render
+   builds the image and starts it. Each start applies pending migrations before the server
+   listens, because Free services have no pre-deploy command. If migrations fail, the
+   service does not start. Later code pushes do not deploy automatically.
 6. Open the HTTPS URL shown in Render. Test sign-in with two real inboxes, create a room,
    join through its invite link, send/read a message, sign out, and sign back in. Check
    a nonmember cannot access the room. Redeploy the same release and verify saved messages.
-7. Confirm database recovery options in Render and perform a restore exercise into a
-   separate database before relying on the service for irreplaceable messages.
 
-`DATABASE_URL` is linked to the database automatically, and `AUTH_SECRET` is generated
-by Render. External database connections are disabled; the app uses Render's private
-network. The app uses Render's assigned `RENDER_EXTERNAL_URL` as its HTTPS origin.
-If you attach a custom website domain, explicitly set `PUBLIC_ORIGIN` to that origin
-(no trailing slash), and use it consistently in browser and invite links.
+If you already applied the earlier paid Blueprint, removing its database from this file
+does not delete that resource or stop its billing. Preserve any existing data before
+switching databases. Update `DATABASE_URL` in the existing web service's Environment tab,
+remove its old pre-deploy command, and ensure its instance type is Free. Only retire an
+old paid database after confirming it is no longer needed. Do not create duplicate services.
 
-For logs, use the web service's **Logs** tab (API/startup/migrations as applicable) and
-the database's own dashboard. Production codes are sent by email, never printed in logs.
-Database data is stored in managed PostgreSQL, not inside the web container.
+`AUTH_SECRET` is generated by Render. The Neon database is reachable over the internet,
+protected by its password and verified TLS. Treat `DATABASE_URL` as a secret: if it leaks,
+reset the role's password in Neon and update the value in Render. The app uses Render's
+assigned `RENDER_EXTERNAL_URL` as its HTTPS origin. If you attach a custom website domain,
+explicitly set `PUBLIC_ORIGIN` to that origin (no trailing slash), and use it consistently
+in browser and invite links.
+
+The Render health check uses `/api/health`, which does not query the database. Startup
+already refuses to serve without a migrated database. Avoiding database checks every few
+seconds lets Neon sleep and saves its compute-hours.
+
+For logs, use the web service's **Logs** tab (startup, migrations and API errors) and Neon's
+**Monitoring** page. Production codes are sent by email, never printed in logs.
+
+To export the data, run `pg_dump` from a PostgreSQL 17 client with the same direct
+connection string, for example through the `postgres:17` Docker image. Store the dump
+privately, and practise restoring it into a separate Neon branch or local database.
 
 ### Develop while the pilot stays live
 
@@ -226,7 +255,9 @@ so existing sessions stay valid.
 
 References: [Render Blueprints](https://render.com/docs/blueprint-spec),
 [deployment lifecycle](https://render.com/docs/deploys),
-[free resource limits](https://render.com/docs/free), and
+[free resource limits](https://render.com/docs/free),
+[Neon Free limits](https://neon.com/pricing),
+[Neon connection setup](https://neon.com/docs/connect/connect-from-any-app), and
 [Resend domain setup](https://resend.com/docs/dashboard/domains/introduction).
 
 ### Hosting without the Blueprint
@@ -246,8 +277,8 @@ Configure the host from the repository root:
 | Readiness endpoint | `/api/ready` |
 
 The migration command uses the compiled API, so build first. Run migrations once per
-release. Render's pre-deploy command requires a supported paid service plan; otherwise
-arrange a separate migration step before starting the new release.
+release. Render's pre-deploy command requires a paid plan, so the free Blueprint runs migrations
+at the start of each boot instead. Elsewhere, run them before starting the new release.
 
 Required production settings:
 
