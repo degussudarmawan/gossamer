@@ -61,19 +61,22 @@ your inbox. Resend mode does not print verification codes in the application log
 other previews; change it to 8787 for the standard local setup, or point your frontend's
 API proxy to 8900.
 
-## Private-room API
+## Room API
 
-All `/api/rooms` routes require a signed-in session. Members can read messages; owners
-can manage invitations, close contributions and remove messages.
+All `/api/rooms` routes require a signed-in session. Private rooms are readable by members;
+public rooms are readable by anyone signed in. Posting requires membership in either case.
+Owners can manage visibility, invitations, contributions and message removal.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| POST | `/api/rooms` | Create a room with `{title, prompt?}` |
+| POST | `/api/rooms` | Create with `{title, prompt?, visibility?}`; visibility defaults to `private` |
 | GET | `/api/rooms` | List the caller's rooms |
+| GET | `/api/rooms/public` | List up to 100 open public rooms, newest first |
 | POST | `/api/rooms/join` | Join with `{code}` |
-| GET | `/api/rooms/:id` | Read a member-only room |
-| PATCH | `/api/rooms/:id` | Owner sets `{closed: true/false}` |
-| POST | `/api/rooms/:id/invite` | Owner rotates the invitation code |
+| POST | `/api/rooms/:id/join` | Join a public room; repeated joins are safe |
+| GET | `/api/rooms/:id` | Read a public room or a private room the caller belongs to |
+| PATCH | `/api/rooms/:id` | Owner sets `closed`, `visibility`, or both |
+| POST | `/api/rooms/:id/invite` | Owner rotates a private room's invitation code |
 | GET | `/api/rooms/:id/messages?after=0` | Read messages, up to 100 per page |
 | POST | `/api/rooms/:id/messages` | Send `{body, signature?, requestId}` |
 | DELETE | `/api/rooms/:id/messages/:messageId` | Owner removes a message |
@@ -82,6 +85,22 @@ Generate a UUID `requestId` for each intended message and reuse it on network re
 Message positions stay stable. Invitation rotation prevents new joins with the old code
 but does not evict existing members. Private rooms are access-controlled, not end-to-end
 encrypted. Signatures are optional display text, not verified identities.
+
+Room responses include `visibility` (`private` or `public`) and `isMember`. Public creation
+returns `inviteCode: null`; its shareable address is `/rooms/:id`. Closing a public room
+removes it from discovery and blocks new members/messages; signed-in readers can still
+open its address. An existing member can repeat a public join even while closed.
+
+Only owners may change visibility. Making a room public exposes its existing notes to all
+signed-in readers; the frontend must clearly confirm that action. Making it private removes
+it from discovery and blocks nonmember reads immediately, while retaining existing members
+and the invitation hash. Public rooms converted to private can issue a link via invite rotation.
+Visibility changes cannot retract content already read. Existing rooms remain private when
+migration `0002_high_stryfe.sql` runs. The migration adds a column/type/index without replacing data.
+
+The public-room frontend is being developed separately; backend support alone does not add
+those screens. Reporting/moderation and shared abuse limits remain launch work before public
+discovery is released to real users. Public discovery and personal room lists are capped at 100.
 
 ## Checks
 
@@ -297,8 +316,8 @@ On an existing Render service, deploy a release containing public sign-in suppor
 allowlist without setting the mode will not work: production defaults to `invite`.
 The Blueprint now sets public mode for new services.
 
-Everyone must still verify their email. Private rooms still require their invitation
-codes and membership. Test with an address that was never on the allowlist. To return
+Everyone must still verify their email. Public sign-in does not make a private room public;
+those rooms still require invitation codes and membership. Test with an address that was never on the allowlist. To return
 to invited sign-in, set `SIGN_IN_MODE=invite` and a nonempty `SIGN_IN_ALLOWLIST`.
 This restricts new sign-ins; it does not revoke existing sessions.
 
@@ -323,7 +342,7 @@ override that location. Package the compiled API, its SQL migrations and the web
 Check database backups and real email delivery before admitting users. Removing an email
 from the sign-in allowlist does not revoke an existing session.
 
-This release includes private rooms, their frontend and optional public registration. Broader abuse
+This branch includes private/public room APIs, the private-room frontend and optional public registration. Broader abuse
 controls, reporting and moderation remain future work. Running locally, committing or
 pushing does not deploy a site.
 

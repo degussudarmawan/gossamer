@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { createApp } from '../app.js';
 import { openPostgres } from './postgres.js';
-import { loginCodes } from './schema.js';
+import { loginCodes, roomMembers, rooms } from './schema.js';
 
 // Never read DATABASE_URL here. This suite only accepts an explicitly named local test database.
 const raw = process.env.POSTGRES_TEST_URL;
@@ -107,4 +107,35 @@ it('persists rooms, enforces membership and serializes retries across two API in
   expect((await request(otherApp, `/rooms/${room.id}/messages/${removed}`, 'DELETE', undefined, owner)).status).toBe(200);
   const remaining = await (await request(app, `/rooms/${room.id}/messages`, 'GET', undefined, owner)).json() as typeof rows;
   expect(remaining.messages).toHaveLength(4);
+});
+
+it('serializes public joins with visibility changes across independent API instances', async () => {
+  const owner = await login(address('public-owner'));
+  const visitor = await login(address('public-visitor'));
+  const created = await request(app, '/rooms', 'POST', { title: 'Public test', visibility: 'public' }, owner);
+  expect(created.status).toBe(201);
+  const { room } = await created.json() as { room: { id: string } };
+  const path = `/rooms/${room.id}`;
+  const listed = await request(otherApp, '/rooms/public', 'GET', undefined, visitor);
+  expect(listed.status).toBe(200);
+  expect((await listed.json() as { rooms: { id: string }[] }).rooms.some((r) => r.id === room.id)).toBe(true);
+  expect((await request(otherApp, path, 'GET', undefined, visitor)).status).toBe(200);
+  // Whichever transaction gets the room lock first determines whether membership is created.
+  const [joined, changed] = await Promise.all([
+    request(otherApp, `${path}/join`, 'POST', undefined, visitor),
+    request(app, path, 'PATCH', { visibility: 'private' }, owner),
+  ]);
+  expect(changed.status).toBe(200);
+  expect([200, 404]).toContain(joined.status);
+  const members = await first.db.select().from(roomMembers).where(eq(roomMembers.roomId, room.id));
+  expect(members).toHaveLength(joined.status === 200 ? 2 : 1);
+  expect((await request(otherApp, path, 'GET', undefined, visitor)).status).toBe(joined.status === 200 ? 200 : 404);
+  expect((await request(otherApp, `${path}/join`, 'POST', undefined, visitor)).status).toBe(404);
+  const [stored] = await first.db.select().from(rooms).where(eq(rooms.id, room.id));
+  expect(stored!.visibility).toBe('private');
+  await request(app, path, 'PATCH', { visibility: 'public' }, owner);
+  const retries = await Promise.all(Array.from({ length: 6 }, (_, i) =>
+    request(i % 2 ? app : otherApp, `${path}/join`, 'POST', undefined, visitor)));
+  expect(retries.every((r) => r.status === 200)).toBe(true);
+  expect(await first.db.select().from(roomMembers).where(eq(roomMembers.roomId, room.id))).toHaveLength(2);
 });

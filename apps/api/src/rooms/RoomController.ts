@@ -6,6 +6,8 @@ import type { AuthController } from '../auth/AuthController.js';
 import type { User } from '../users/UserRepository.js';
 import { RoomError, type RoomService } from './RoomService.js';
 
+const visibility = z.enum(['private', 'public']);
+
 const body = <T extends z.ZodType>(schema: T) => zValidator('json', schema, (result, c) => {
   if (!result.success) return c.json({ error: 'invalid_input' }, 400);
 });
@@ -22,29 +24,34 @@ export class RoomController {
       await next();
     });
     app.use('*', bodyLimit({ maxSize: 16 * 1024 }));
-    app.use('/:id/*', async (c, next) => {
-      const id = c.req.param('id');
-      if (id !== 'join' && !z.uuid().safeParse(id).success) return c.json({ error: 'invalid_input' }, 400);
-      await next();
-    });
     app.onError((error, c) => {
       if (!(error instanceof RoomError)) throw error;
       const status = error.code === 'not_found' ? 404 : error.code === 'forbidden' ? 403 : 409;
       return c.json({ error: error.code }, status);
     });
     app.get('/', async (c) => c.json({ rooms: await this.service.list(c.get('user').id) }));
-    app.post('/', body(z.object({ title: z.string().trim().min(1).max(120), prompt: z.string().trim().max(1000).default('') }).strict()),
-      async (c) => { const b = c.req.valid('json'); return c.json(await this.service.create(c.get('user').id, b.title, b.prompt), 201); });
+    app.get('/public', async (c) => c.json({ rooms: await this.service.listPublic(c.get('user').id) }));
+    app.post('/', body(z.object({ title: z.string().trim().min(1).max(120), prompt: z.string().trim().max(1000).default(''),
+      visibility: visibility.default('private') }).strict()),
+      async (c) => { const b = c.req.valid('json'); return c.json(await this.service.create(c.get('user').id, b.title, b.prompt, b.visibility), 201); });
     app.post('/join', body(z.object({ code: z.string().trim().regex(/^[a-fA-F0-9]{24}$/) }).strict()),
       async (c) => c.json({ room: await this.service.join(c.get('user').id, c.req.valid('json').code) }));
+    // Static endpoints above finish before UUID validation; reserved words in nested
+    // paths still fail here rather than reaching PostgreSQL as malformed UUIDs.
+    app.use('/:id/*', async (c, next) => {
+      if (!z.uuid().safeParse(c.req.param('id')).success) return c.json({ error: 'invalid_input' }, 400);
+      await next();
+    });
     app.get('/:id', async (c) => {
       if (!z.uuid().safeParse(c.req.param('id')).success) return c.json({ error: 'invalid_input' }, 400);
       return c.json({ room: await this.service.read(c.req.param('id'), c.get('user').id) });
     });
-    app.patch('/:id', body(z.object({ closed: z.boolean() }).strict()), async (c) => {
+    app.patch('/:id', body(z.object({ closed: z.boolean().optional(), visibility: visibility.optional() }).strict()
+      .refine((b) => b.closed !== undefined || b.visibility !== undefined)), async (c) => {
       if (!z.uuid().safeParse(c.req.param('id')).success) return c.json({ error: 'invalid_input' }, 400);
-      return c.json({ room: await this.service.manage(c.req.param('id'), c.get('user').id, c.req.valid('json').closed) });
+      return c.json({ room: await this.service.manage(c.req.param('id'), c.get('user').id, c.req.valid('json')) });
     });
+    app.post('/:id/join', async (c) => c.json({ room: await this.service.joinPublic(c.req.param('id'), c.get('user').id) }));
     app.post('/:id/invite', async (c) => c.json(await this.service.rotate(c.req.param('id'), c.get('user').id)));
     app.get('/:id/messages', async (c) => {
       const after = z.coerce.number().int().min(0).max(2147483647).safeParse(c.req.query('after') ?? 0);

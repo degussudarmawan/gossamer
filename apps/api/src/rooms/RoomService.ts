@@ -1,28 +1,33 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Clock } from '../shared/Clock.js';
-import { type MessageInput, type Room, RoomRepository } from './RoomRepository.js';
+import { type MessageInput, type Room, type RoomUpdate, type Visibility, RoomRepository } from './RoomRepository.js';
 
 export class RoomError extends Error {
-  constructor(public readonly code: 'not_found' | 'forbidden' | 'room_closed' | 'retry_conflict') { super(code); }
+  constructor(public readonly code: 'not_found' | 'forbidden' | 'room_closed' | 'retry_conflict' | 'public_room') { super(code); }
 }
 const hash = (code: string) => createHash('sha256').update(code).digest('hex');
 const issue = () => randomBytes(12).toString('hex').toUpperCase();
-const view = (r: Room, userId: string) => ({ id: r.id, title: r.title, prompt: r.prompt,
-  seed: r.seed, closed: r.closed, createdAt: r.createdAt, isOwner: r.ownerId === userId });
+const view = (r: Room, userId: string, isMember = true) => ({ id: r.id, title: r.title, prompt: r.prompt,
+  seed: r.seed, closed: r.closed, createdAt: r.createdAt, isOwner: r.ownerId === userId,
+  visibility: r.visibility, isMember });
 const requireMember = (member: boolean) => { if (!member) throw new RoomError('not_found'); };
+const requireReader = (r: Room, member: boolean) => { if (r.visibility !== 'public') requireMember(member); };
 const requireOwner = (r: Room, userId: string) => { if (r.ownerId !== userId) throw new RoomError('forbidden'); };
 
 export class RoomService {
   constructor(private readonly rooms: RoomRepository, private readonly clock: Clock) {}
-  async create(userId: string, title: string, prompt: string) {
+  async create(userId: string, title: string, prompt: string, visibility: Visibility = 'private') {
     const inviteCode = issue();
-    const room = await this.rooms.create(userId, title, prompt, hash(inviteCode));
-    return { room: view(room, userId), inviteCode };
+    const room = await this.rooms.create(userId, title, prompt, hash(inviteCode), visibility);
+    return { room: view(room, userId), inviteCode: visibility === 'private' ? inviteCode : null };
   }
   async list(userId: string) { return (await this.rooms.list(userId)).map(({ room }) => view(room, userId)); }
+  async listPublic(userId: string) {
+    return (await this.rooms.listPublic(userId)).map(({ room, isMember }) => view(room, userId, isMember));
+  }
   async read(id: string, userId: string) {
     return this.found(await this.rooms.withRoom(id, userId, async (r, member) => {
-      requireMember(member); return view(r, userId);
+      requireReader(r, member); return view(r, userId, member);
     }));
   }
   async join(userId: string, code: string) {
@@ -36,21 +41,29 @@ export class RoomService {
       await ops.join(userId); return view(r, userId);
     }));
   }
-  async manage(id: string, userId: string, closed: boolean) {
+  async joinPublic(id: string, userId: string) {
+    return this.found(await this.rooms.withRoom(id, userId, async (r, member, ops) => {
+      if (r.visibility !== 'public') throw new RoomError('not_found');
+      if (!member && r.closed) throw new RoomError('room_closed');
+      await ops.join(userId); return view(r, userId);
+    }));
+  }
+  async manage(id: string, userId: string, changes: RoomUpdate) {
     return this.found(await this.rooms.withRoom(id, userId, async (r, member, ops) => {
       requireMember(member); requireOwner(r, userId);
-      return view(await ops.update({ closed }), userId);
+      return view(await ops.update(changes), userId);
     }));
   }
   async rotate(id: string, userId: string) {
     return this.found(await this.rooms.withRoom(id, userId, async (r, member, ops) => {
       requireMember(member); requireOwner(r, userId);
+      if (r.visibility === 'public') throw new RoomError('public_room');
       const inviteCode = issue(); await ops.update({ inviteHash: hash(inviteCode) }); return { inviteCode };
     }));
   }
   async messages(id: string, userId: string, after: number) {
-    return this.found(await this.rooms.withRoom(id, userId, async (_r, member, ops) => {
-      requireMember(member); return ops.listMessages(after);
+    return this.found(await this.rooms.withRoom(id, userId, async (r, member, ops) => {
+      requireReader(r, member); return ops.listMessages(after);
     }));
   }
   async send(id: string, userId: string, input: MessageInput) {

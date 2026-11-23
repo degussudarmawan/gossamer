@@ -1,4 +1,4 @@
-import { index, integer, pgTable, primaryKey, uniqueIndex, boolean, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, pgEnum, pgTable, primaryKey, uniqueIndex, boolean, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 
@@ -36,7 +36,9 @@ export const sessions = pgTable('sessions', {
   createdAt: createdAt(),
 });
 
-// Private collections: invite credentials never appear in read responses.
+export const roomVisibility = pgEnum('room_visibility', ['private', 'public']);
+
+// Existing collections stay private. Invite credentials never appear in read responses.
 export const rooms = pgTable('rooms', {
   id: uuid('id').primaryKey().defaultRandom(),
   ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -45,9 +47,11 @@ export const rooms = pgTable('rooms', {
   seed: uuid('seed').notNull().defaultRandom(),
   inviteHash: text('invite_hash').notNull().unique(),
   closed: boolean('closed').notNull().default(false),
+  visibility: roomVisibility('visibility').notNull().default('private'),
   nextPosition: integer('next_position').notNull().default(1),
   createdAt: createdAt(),
-}, (t) => [index('rooms_owner_idx').on(t.ownerId)]);
+}, (t) => [index('rooms_owner_idx').on(t.ownerId),
+  index('rooms_discovery_idx').on(t.visibility, t.closed, t.createdAt, t.id)]);
 
 export const roomMembers = pgTable('room_members', {
   roomId: uuid('room_id').notNull().references(() => rooms.id, { onDelete: 'cascade' }),
