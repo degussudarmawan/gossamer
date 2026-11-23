@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { explain } from '../../lib/explain';
 import type { Room } from '../../lib/RoomApi';
 import { roomApi } from '../../services';
+import QrCode from '../QrCode';
 import { note, primary, quiet } from '../ui';
 
 type Props = {
@@ -12,14 +13,21 @@ type Props = {
   onRoom: (room: Room) => void;
 };
 
-// What only the person who opened the room can do: hand out the invite link,
-// replace it, and close or reopen the room. Lives inside a Sheet, shown only
-// to the owner; the backend checks ownership again on every one of these.
+// A link built on one of these names points back at the computer it was made
+// on, so a phone scanning the QR code can't open it. Only happens in development.
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
+// What only the person who opened the room can do: hand out the invite link
+// (copied, or shown as a QR code for someone to scan), replace it, and close or
+// reopen the room. Lives inside a Sheet, shown only to the owner; the backend
+// checks ownership again on every one of these.
 export default function OwnerTools({ room, inviteCode, onInvite, onRoom }: Props) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [showQr, setShowQr] = useState(false);
 
   const link = inviteCode ? `${window.location.origin}/join#${inviteCode}` : null;
+  const local = LOCAL_HOSTS.includes(window.location.hostname);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -58,6 +66,25 @@ export default function OwnerTools({ room, inviteCode, onInvite, onRoom }: Props
               copy link
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setShowQr(!showQr)}
+            aria-expanded={showQr}
+            aria-controls="invite-qr"
+            className={`justify-self-end ${quiet}`}
+          >
+            {showQr ? 'hide qr code' : 'show qr code'}
+          </button>
+          {showQr && (
+            <figure id="invite-qr" className="grid justify-items-center gap-2">
+              <QrCode value={link} label="QR code of the invite link" className="w-56 max-w-full" />
+              <figcaption className={`text-center ${note}`}>
+                {local
+                  ? 'this link points at localhost, so a phone can’t open it. open the site by its network address to try it on a phone.'
+                  : 'point a phone’s camera at it to open the link.'}
+              </figcaption>
+            </figure>
+          )}
         </div>
       ) : (
         <div className="flex items-center justify-between gap-4">
