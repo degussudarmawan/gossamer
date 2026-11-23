@@ -53,7 +53,7 @@ export default function OwnerTools({ room, inviteCode, onInvite, onRoom }: Props
         <div className="grid gap-3">
           <p className="rounded-xl border border-ink-soft/40 p-3 text-sm break-all text-ink select-all">{link}</p>
           <div className="flex items-center justify-between gap-4">
-            <p className={note}>shown once. anyone with it can join.</p>
+            <p className={note}>shown only this once. anyone with the link can join.</p>
             <button type="button" disabled={busy} onClick={copy} className={`shrink-0 ${primary}`}>
               copy link
             </button>
@@ -61,17 +61,20 @@ export default function OwnerTools({ room, inviteCode, onInvite, onRoom }: Props
         </div>
       ) : (
         <div className="flex items-center justify-between gap-4">
-          <p className={note}>lost the link? a new one replaces the old.</p>
+          <p className={note}>the link is shown only once. making a new one turns the old one off.</p>
           <button type="button" disabled={busy} onClick={rotate} className={`shrink-0 ${primary}`}>
-            new link
+            make a new link
           </button>
         </div>
       )}
 
       <div className="flex items-center justify-between gap-4 border-t border-ink-soft/25 pt-5">
-        <p className={note}>{room.closed ? 'closed: no new people or messages.' : 'open to new people and messages.'}</p>
+        <p className={note}>
+          {/* the panel's title already says whether the room is open or closed */}
+          {room.closed ? 'no one new can join or write.' : 'people with the link can join and write.'}
+        </p>
         <button type="button" disabled={busy} onClick={() => setClosed(!room.closed)} className={`shrink-0 ${quiet}`}>
-          {room.closed ? 'reopen' : 'close room'}
+          {room.closed ? 'reopen the room' : 'close the room'}
         </button>
       </div>
 

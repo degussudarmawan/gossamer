@@ -13,6 +13,14 @@ export const area =
 export const primary =
   'cursor-pointer rounded-full border border-ink px-6 py-2 text-ink transition-colors hover:bg-ink hover:text-(--cloth) disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink';
 
+/**
+ * A way forward written as a gold underlined word, like "open a room" where the
+ * landing page ends. Used where a screen offers a few equal choices in a row.
+ * The vertical padding only enlarges the tap area; it doesn't show.
+ */
+export const action =
+  'cursor-pointer py-1 text-sm font-medium text-ink underline decoration-1 underline-offset-4';
+
 /** Secondary actions and links: small underlined text. */
 export const quiet = 'cursor-pointer text-sm font-medium text-ink-soft underline decoration-1 underline-offset-4';
 

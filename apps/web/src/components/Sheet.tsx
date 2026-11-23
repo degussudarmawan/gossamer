@@ -19,7 +19,12 @@ export default function Sheet({ open, onClose, title, children }: Props) {
   useEffect(() => {
     const el = dialog.current;
     if (!el) return;
-    if (open && !el.open) el.showModal();
+    if (open && !el.open) {
+      el.showModal();
+      // showModal focuses the first button (close). A panel with somewhere to
+      // type marks it with data-autofocus, and the cursor goes there instead.
+      el.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+    }
     if (!open && el.open) el.close();
   }, [open]);
 
