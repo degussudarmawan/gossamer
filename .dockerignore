@@ -1,0 +1,18 @@
+# Include only build inputs. Local notes, Git history and credentials stay on the host.
+**
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.base.json
+!apps/
+!apps/**
+**/node_modules
+**/dist
+**/.data
+**/.env
+**/.env.*
+**/*.log
+**/*.md
+**/*.pdf
+**/*.docx
+**/.DS_Store

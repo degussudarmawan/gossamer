@@ -100,14 +100,83 @@ named `gossamer_test`. It never reads the production `DATABASE_URL`.
 pnpm --filter @spider-web/api test:postgres
 ```
 
-GitHub Actions provisions PostgreSQL 17 for that suite. Docker is optional for local
-PostgreSQL testing; the application does not currently include a Dockerfile or Compose setup.
+GitHub Actions provisions PostgreSQL 17 for that suite.
+
+## Run with Docker
+
+Docker Desktop (or Docker Engine with Compose v2) is an alternative to installing Node
+and PostgreSQL locally. From the repository root:
+
+```sh
+docker compose up --build -d
+```
+
+Open **http://localhost:5300**. This runs the built frontend and API in one non-root app
+container, with PostgreSQL in another container. A one-off migration service runs after
+the database becomes healthy and before the app starts. The database has no published
+host port. The website is bound to localhost only.
+
+The default Compose setup is a **local sandbox**, not a public production deployment.
+It uses console email and local-only credentials; it never reads `apps/api/.env`
+automatically or connects to your hosted database.
+
+Useful commands:
+
+```sh
+docker compose logs -f app          # includes local sign-in codes in console mode
+docker compose ps                  # service/health status
+docker compose exec db psql -U gossamer -d gossamer  # inspect local tables
+docker compose down                # stop; keep database data
+```
+
+Data lives in the Compose project's `postgres-data` named volume. It survives container
+recreation. `docker compose down --volumes` explicitly deletes that sandbox database.
+Your PGlite previews and their data are separate. Change `APP_PORT` if 5300 is in use:
+
+```sh
+APP_PORT=5301 docker compose up --build -d
+```
+
+For real email in this local sandbox, explicitly opt into your ignored API environment file:
+
+```sh
+docker compose --env-file apps/api/.env up --build -d
+```
+
+Set `MAIL_MODE=resend`, `RESEND_API_KEY`, `MAIL_FROM` and optionally `SIGN_IN_ALLOWLIST`
+in that file first. Compose still uses its own PostgreSQL database and local HTTP settings.
+Keep using the same `--env-file` option when managing this stack. Do not paste the output
+of `docker compose config` into chat or issues: resolved environment settings can contain secrets.
+
+The Dockerfile builds frontend assets and API code in a build stage, installs
+only API production dependencies in the runtime, and runs as the `node` user. `.dockerignore`
+excludes credentials, private documents, host dependencies, build output and database files.
+Application changes require rebuilding with `docker compose up --build -d`; this setup
+does not provide hot reload. `pnpm dev` remains available for day-to-day frontend work.
+
+To run an automated smoke check, use a separate Compose project with console email and an
+empty allowlist. It creates synthetic accounts/rooms and recreates the containers to verify
+persistence. It never sends real email:
+
+```sh
+COMPOSE_PROJECT_NAME=gossamer-check APP_PORT=5301 docker compose up --build -d --wait
+COMPOSE_PROJECT_NAME=gossamer-check APP_PORT=5301 node scripts/smoke-docker.mjs
+COMPOSE_PROJECT_NAME=gossamer-check APP_PORT=5301 docker compose down --volumes
+```
+
+The image packages the frontend present on the branch being built. Integrate the room UI
+branch before expecting room screens in a backend-only branch's image.
 
 ## Deployment
 
 A recommended initial setup is a Node web service on Render, managed PostgreSQL, and
 Resend. The Node service serves both the built frontend and API under one HTTPS origin.
 Local testing and hosted production must use separate databases and secrets.
+
+The same Dockerfile can build a hosted image. Its default `NODE_ENV=production` requires
+the settings below. Use managed PostgreSQL, inject secrets at runtime, and run
+`node dist/db/migrate.js` once per release before starting the app. Do not deploy the local
+Compose credentials/settings. Docker does not publish a website by itself.
 
 Configure the host from the repository root:
 

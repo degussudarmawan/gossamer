@@ -50,3 +50,22 @@ jobs:
       - run: pnpm --filter @spider-web/api test:postgres
         env:
           POSTGRES_TEST_URL: postgresql://gossamer_test:local-test-only@127.0.0.1:5432/gossamer_test
+
+  docker:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: gossamer-ci
+      IMAGE_TAG: ci
+      MAIL_MODE: console
+      SIGN_IN_ALLOWLIST: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: docker compose up --build -d --wait --wait-timeout 120
+      - run: node scripts/smoke-docker.mjs
+      - if: failure()
+        run: docker compose logs --no-color --tail 100
+      - if: always()
+        run: docker compose down --volumes

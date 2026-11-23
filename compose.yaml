@@ -1,0 +1,60 @@
+name: gossamer-local
+
+x-app-image: &app-image
+  image: gossamer:${IMAGE_TAG:-local}
+  build: .
+
+services:
+  db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: gossamer
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: gossamer
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gossamer -d gossamer"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+    # No host port: the database is reachable only through the Compose network.
+
+  migrate:
+    <<: *app-image
+    command: ["node", "dist/db/migrate.js"]
+    environment:
+      DATABASE_URL: postgresql://gossamer:local-development-only@db:5432/gossamer
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    <<: *app-image
+    init: true
+    ports:
+      - "127.0.0.1:${APP_PORT:-5300}:8787"
+    environment:
+      # Local HTTP sandbox. The image itself defaults to production when deployed separately.
+      NODE_ENV: development
+      PORT: "8787"
+      WEB_DIST: /app/apps/web/dist
+      DATABASE_URL: postgresql://gossamer:local-development-only@db:5432/gossamer
+      AUTH_SECRET: local-development-only-not-for-hosting
+      MAIL_MODE: ${MAIL_MODE:-console}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      SIGN_IN_ALLOWLIST: ${SIGN_IN_ALLOWLIST:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 10
+
+volumes:
+  postgres-data:
