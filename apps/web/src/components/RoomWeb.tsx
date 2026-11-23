@@ -1,31 +1,56 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  animate,
-  motion,
-  useMotionValue,
-  useMotionValueEvent,
-  useReducedMotion,
-  useTransform,
-  type MotionValue,
-} from 'motion/react';
-import { useFontReady } from '../hooks/useFontReady';
-import type { Message } from '../lib/RoomApi';
-import { pointAlong, WebLayout, type Point, type Run } from '../web/WebLayout';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { motion, useMotionValue, useMotionValueEvent, useReducedMotion, useTransform, type MotionValue } from 'motion/react';
+import { pointAlong, type Point, type Run, type WebLayout } from '../web/WebLayout';
 import OrbitSpider from './OrbitSpider';
 
 // A room's web, woven entirely from its messages (see web/WebLayout.ts). The
-// spider writes it: when a room opens it writes out the newest message's
-// words, and when a new one arrives it walks out and writes again.
+// visitor's scrolling has the spider write it, as on the landing page: at the
+// top of the page there is only the title; scrolling down, the spider leaves
+// its ring and writes the notes one by one (it is the tip of the words as they
+// appear), first the rays, then the strandies, then walks back to its ring.
+// Scrolling up un-writes them.
 //
 // This is the decorative view. The same messages are always available in full
 // as an ordinary list on the room screen, so nothing here is the only way to
 // read anything.
 
-const SECONDS_PER_RUN = 0.9;
-const MAX_REPLAY_SECONDS = 6;
-// Of the time given to each run of words, this share is spent writing it; the
+// Of the scroll given to each run of words, this share is spent writing it; the
 // rest is the spider walking to where the next one starts.
 const WRITING = 0.8;
+
+// Scroll distances, in screen heights: before the first note (the visitor reads
+// the instruction, then the spider walks out), for each note (less when there
+// are many, so all of them together never take more than MOST), and for the walk
+// home after the last. Doubled at the owner's request, so the writing is slow
+// enough to read as it appears.
+const LEAD = 0.8;
+const PER_RUN = 1;
+const MOST = 14;
+const HOME = 0.8;
+/** Of the lead, the share before the spider sets out. */
+const SET_OUT = 0.45;
+
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+const smooth = (u: number) => u * u * (3 - 2 * u);
+const TAU = Math.PI * 2;
+/** How far round from the top (12 o'clock), clockwise, a direction is: 0 to 2π. */
+const fromTop = (angle: number) => (((angle + Math.PI / 2) % TAU) + TAU) % TAU;
+
+export type ScrollPlan = {
+  /** How tall the page is, in screen heights. */
+  screens: number;
+  /** Where in the scroll (0 to 1) the writing starts and ends. */
+  start: number;
+  end: number;
+};
+
+/** How far the room's page scrolls so that scrolling writes `runs` runs of words. No runs, no scrolling. */
+export function scrollPlan(runs: number): ScrollPlan {
+  if (runs === 0) return { screens: 1, start: 0, end: 1 };
+  const per = Math.min(PER_RUN, MOST / runs);
+  const span = LEAD + runs * per + HOME;
+  return { screens: 1 + span, start: LEAD / span, end: (LEAD + runs * per) / span };
+}
 
 function RunText({
   id,
@@ -77,26 +102,30 @@ function WritingRun(props: { id: string; run: Run; dy: number; index: number; wr
 }
 
 type Props = {
-  width: number;
-  height: number;
-  seed: number;
-  messages: Message[];
+  /** The web for this screen and these messages (the room page lays it out, to size its scroll). */
+  layout: WebLayout;
+  /** How far down the page the visitor has scrolled, in px. */
+  scrollY: MotionValue<number>;
+  /** Where in the page's scroll the writing happens (see scrollPlan). */
+  plan: ScrollPlan;
   /** Called when a strand is clicked, with that message's id. */
   onPick: (id: string) => void;
 };
 
-export default function RoomWeb({ width, height, seed, messages, onPick }: Props) {
-  const fontReady = useFontReady('Quicksand Variable');
+export default function RoomWeb({ layout, scrollY, plan, onPick }: Props) {
   const still = useReducedMotion();
-  // fontReady is a dependency because the words are measured in the real font
-  const layout = useMemo(() => new WebLayout(width, height, seed, messages), [width, height, seed, messages, fontReady]);
   const runs = layout.runs;
   const total = runs.length;
   const { cx, cy, rx, ry } = layout.hub;
 
-  // The newest message, and its words: those are what the spider writes.
-  const newest = useMemo(() => [...messages].sort((p, q) => q.position - p.position)[0]?.id ?? null, [messages]);
-  const newestRuns = useMemo(() => (newest ? runs.filter((r) => r.ids.includes(newest)).length : 0), [newest, runs]);
+  // The order the spider writes in (the owner's call): all the rays first, then
+  // the strandies, the inner ones before the outer. Each sweeps clockwise from the
+  // top, so the spider goes round the web rather than jumping about. Runs sharing
+  // a strand keep the order they were written in.
+  const order = useMemo(() => {
+    const rank = (r: Run) => (r.kind === 'spoke' ? 0 : 2 - r.depth);
+    return [...runs].sort((p, q) => rank(p) - rank(q) || fromTop(p.angle) - fromTop(q.angle));
+  }, [runs]);
 
   // `written` counts runs laid down so far: 3.4 means three done and the
   // fourth 40% written. `done` is its whole part, kept in state so React draws
@@ -104,81 +133,55 @@ export default function RoomWeb({ width, height, seed, messages, onPick }: Props
   const written = useMotionValue(0);
   const [done, setDone] = useState(0);
   useMotionValueEvent(written, 'change', (v) => setDone(Math.min(total, Math.floor(v))));
+  // Before the first run the spider walks out to it: 0 = on its ring, 1 = at the start.
+  const out = useMotionValue(0);
+  // After the last run it walks home: 0 = at the end of that run, 1 = back on its ring.
+  const home = useMotionValue(0);
 
-  // After the last run the spider walks home: 0 = at the end of that run, 1 = back on its ring.
-  const home = useMotionValue(1);
-  const lastTip = useRef<Point | null>(null);
-
-  // The newest message's words are written last, so the spider can be seen writing them.
-  const order = useMemo(() => {
-    const rest = runs.filter((r) => !newest || !r.ids.includes(newest));
-    return [...rest, ...runs.filter((r) => newest && r.ids.includes(newest))];
-  }, [newest, runs]);
-
-  // When the room opens, and whenever a new message arrives, the spider writes
-  // the newest message. (A full web doesn't grow: the new message takes over an
-  // old strand, so this follows which message is newest, not how many runs there are.)
-  const writtenFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (total > 0 && writtenFor.current !== newest) {
-      writtenFor.current = newest;
-      const start = Math.max(0, total - Math.max(1, newestRuns));
-      written.set(start);
-      setDone(start);
-    }
-    const from = written.get();
-    // nothing new to write (or fewer runs than before): just show them
-    if (still || total <= from) {
-      written.set(total);
-      setDone(total);
-      return;
-    }
-    home.set(0);
-    const run = animate(written, total, {
-      duration: Math.min(MAX_REPLAY_SECONDS, (total - from) * SECONDS_PER_RUN),
-      ease: 'linear',
-    });
-    let goingHome: ReturnType<typeof animate> | undefined;
-    void run.then(() => {
-      goingHome = animate(home, 1, { duration: 1.4, ease: 'easeInOut' });
-    });
-    return () => {
-      run.stop();
-      goingHome?.stop();
-    };
-  }, [total, still, written, home, newest, newestRuns]);
+  // The scroll drives all three: walking out during the lead, writing between
+  // plan.start and plan.end, walking home after. Progress is worked out here from
+  // the page as it is now: a page that can't scroll (yet) is at the start, never
+  // at the end, so nothing shows before the visitor scrolls.
+  const follow = useCallback(
+    (y: number) => {
+      const scrollable = document.documentElement.scrollHeight - window.innerHeight;
+      const p = scrollable >= 1 ? clamp01(y / scrollable) : 0;
+      const setOut = plan.start * SET_OUT;
+      out.set(clamp01((p - setOut) / (plan.start - setOut || 1)));
+      written.set(clamp01((p - plan.start) / (plan.end - plan.start || 1)) * total);
+      home.set(plan.end >= 1 ? 1 : clamp01((p - plan.end) / (1 - plan.end)));
+    },
+    [plan, total, out, written, home],
+  );
+  useMotionValueEvent(scrollY, 'change', follow);
+  // and again whenever the web itself changes (a new note, a resize), without waiting for a scroll
+  useEffect(() => follow(scrollY.get()), [follow, scrollY]);
 
   // While writing, the spider is the tip of the words; between runs it walks
-  // to the next one; then it walks back to its ring. Its group is centred on
-  // the hub, while runs are in screen pixels.
+  // to the next one; then it walks back to its ring. With reduced motion it
+  // stays on its ring and the words still appear with scrolling. Its group is
+  // centred on the hub, while runs are in screen pixels.
   const errand = useCallback(
     (onLoop: Point): Point => {
+      if (still || total === 0) return onLoop;
       const local = (p: Point) => ({ x: p.x - cx, y: p.y - cy });
+      const toward = (from: Point, to: Point, t: number) => ({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t });
       const v = written.get();
-      const index = Math.min(total - 1, Math.floor(v));
-      const current = order[index];
-      if (current && v < total) {
-        const u = v - index;
+      if (v <= 0) return toward(onLoop, local(order[0]!.points[0]!), smooth(out.get()));
+      if (v < total) {
+        const index = Math.floor(v);
+        const current = order[index]!;
         const next = order[index + 1];
-        if (u <= WRITING || !next) {
-          lastTip.current = local(pointAlong(current.points, u / WRITING));
-        } else {
-          const from = current.points[current.points.length - 1]!;
-          const to = next.points[0]!;
-          const t = (u - WRITING) / (1 - WRITING);
-          lastTip.current = local({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t });
-        }
-        return lastTip.current;
+        const u = v - index;
+        if (u <= WRITING || !next) return local(pointAlong(current.points, u / WRITING));
+        return local(toward(current.points[current.points.length - 1]!, next.points[0]!, (u - WRITING) / (1 - WRITING)));
       }
-      const tip = lastTip.current;
-      const t = home.get();
-      if (!tip || t >= 1) return onLoop;
-      return { x: tip.x + (onLoop.x - tip.x) * t, y: tip.y + (onLoop.y - tip.y) * t };
+      const last = order[total - 1]!;
+      return toward(local(last.points[last.points.length - 1]!), onLoop, smooth(home.get()));
     },
-    [order, total, written, home, cx, cy],
+    [still, total, order, written, out, home, cx, cy],
   );
 
-  if (width === 0) return null;
   return (
     <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
       {order.slice(0, done + 1).map((run, index) => {

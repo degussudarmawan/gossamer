@@ -46,6 +46,14 @@ export type Run = {
   size: number;
   weight: 400 | 500;
   kind: 'spoke' | 'ring';
+  /**
+   * Which way its strand lies from the hub, in radians clockwise from the right: a
+   * spoke's own direction, or the middle of a strandie's two spokes. The same for
+   * every run on one strand, so the order they're written in can follow the web.
+   */
+  angle: number;
+  /** For a strandie, 0 the outermost to 1 the innermost; 0 for a spoke. */
+  depth: number;
   /** The message(s) whose words are in this run. */
   ids: string[];
 };
@@ -154,6 +162,17 @@ const MAX_CHARS = 120;
  * off it. Enough for the longest message (MAX_CHARS) at the smallest letters.
  */
 const SPILL = 2400;
+/**
+ * The whole web turned this far to the left (anticlockwise), on top of each room's own
+ * seeded starting angle: the owner asked for it turned 40° left. Screen angles run
+ * clockwise (y points down), so left is negative.
+ */
+const TURN = (-40 * Math.PI) / 180;
+/**
+ * A strandie's second line, for a message too long for one, runs alongside the first,
+ * this many letter sizes from it, on the side the letters' feet face (the owner's picture).
+ */
+const LINE_GAP = 1.3;
 /** A message that can be spread to this share of its strand is spread to the end; a shorter one leaves room for another. */
 const FILL = 0.8;
 
@@ -317,15 +336,24 @@ function onSpoke(sp: Spoke, c: Point, r: number): Point {
 }
 
 /**
- * One strandie between two spokes: where its letters may start and stop, and how much
- * of that shows on the screen from the start (the rest runs off the edge).
+ * A line words can go along: where its letters may start and stop, and how much of that
+ * shows on the screen from the start (the rest runs off the edge).
  */
-type Chord = { line: Line; from: number; to: number; shown: number; top: boolean; mid: number };
+type Track = { line: Line; from: number; to: number; shown: number };
+
+/** One strandie between two spokes, and the second line alongside it, if there's room for one. */
+type Chord = Track & { second: Track | null; top: boolean; mid: number };
 
 type Item = { id: string; body: string; order: number };
 
+/**
+ * Where a message's words go on a strand: the words, where they start and how long they
+ * run; on a strandie, perhaps going on on its second line.
+ */
+type Fit = { text: string; start: number; len: number; text2?: string; start2?: number; len2?: number };
+
 /** One message's words on a strand. */
-type Piece = { id: string; order: number; text: string; start: number; len: number };
+type Piece = Fit & { id: string; order: number };
 
 /** A spoke, or one scallop of a ring: somewhere one or more whole messages can go. */
 type Strand = {
@@ -337,6 +365,11 @@ type Strand = {
   room: number;
   /** How much further the line goes on past `room`, off the screen: words may run on into it. */
   spill: number;
+  /** A strandie's second line, for a message too long for one: the same three measures. */
+  line2: Line | null;
+  from2: number;
+  room2: number;
+  spill2: number;
   /** A spoke pointing left reads in toward the hub, so its letters stay upright. */
   inward: boolean;
   angle: number;
@@ -419,7 +452,7 @@ export class WebLayout {
     const placed = this.strands
       .flatMap((st) => st.pieces.map((p) => ({ st, p })))
       .sort((a, b) => a.p.order - b.p.order);
-    this.runs = placed.map(({ st, p }) => this.runFor(st, p));
+    this.runs = placed.flatMap(({ st, p }) => this.runsFor(st, p));
     this.hidden = msgs.length - placed.length;
   }
 
@@ -459,7 +492,7 @@ export class WebLayout {
   private frame(): Strand[] {
     const T = this.T;
     const count = T.spokes;
-    const turn = this.rnd() * TAU;
+    const turn = this.rnd() * TAU + TURN;
     const spokes = Array.from({ length: count }, (_, i) =>
       this.makeSpoke(turn + ((i + (this.rnd() - 0.5) * 0.24) / count) * TAU, i % 2 ? 1 : -1),
     );
@@ -475,6 +508,10 @@ export class WebLayout {
         from: 0,
         room: sp.max,
         spill: SPILL,
+        line2: null,
+        from2: 0,
+        room2: 0,
+        spill2: 0,
         inward: !readable(sp.u),
         angle: sp.angle,
         depth: 0,
@@ -492,6 +529,10 @@ export class WebLayout {
           from: ch.from,
           room: ch.shown,
           spill: ch.to - ch.from - ch.shown,
+          line2: ch.second?.line ?? null,
+          from2: ch.second?.from ?? 0,
+          room2: ch.second?.shown ?? 0,
+          spill2: ch.second ? ch.second.to - ch.second.from - ch.second.shown : 0,
           inward: false,
           angle: ch.mid,
           depth,
@@ -545,10 +586,12 @@ export class WebLayout {
       const size = st.pieces.length ? st.size : this.sizeFor(st, text);
       const fit = size ? this.fitOn(st, text, size) : null;
       if (!size || !fit) continue;
-      // room left over on the screen, and how far it would run off the screen
-      const end = fit.start + fit.len;
-      const left = Math.max(0, st.room - end) / st.room;
-      const off = Math.max(0, end - st.room) / st.room;
+      // Room left over on the screen, and how far it would run off the screen. A
+      // message that goes on to a strandie's second line has filled its first.
+      const used = fit.text2 ? st.room : fit.start + fit.len;
+      const left = Math.max(0, st.room - used) / st.room;
+      const off =
+        Math.max(0, used - st.room) / st.room + (fit.len2 && st.room2 ? Math.max(0, fit.len2 - st.room2) / st.room2 : 0);
       const cost = 2 * (1 - size / T[st.kind].size) + left + 3 * off + 0.6 * st.depth;
       if (!best || cost < best.cost) best = { st, size, cost };
     }
@@ -558,10 +601,9 @@ export class WebLayout {
     // empty strand takes it if all but its last few words fit.
     const empty = this.strands.filter((st) => st.pieces.length === 0);
     const longestEmpty = empty.reduce<Strand | null>((a, st) => (!a || st.room > a.room ? st : a), null);
-    const cutFor = (st: Strand, wholeWords: boolean) => {
-      const K = T[st.kind];
-      return cutToFit(text, (t) => widthAt(t, K.min, K.weight, K.track[0]) <= st.room + st.spill, wholeWords);
-    };
+    // as much as fits the (empty) strand at the smallest size, on one line or two
+    const cutFor = (st: Strand, wholeWords: boolean) =>
+      cutToFit(text, (t) => this.fitOn(st, t, T[st.kind].min) !== null, wholeWords);
     if (longestEmpty) {
       const cut = cutFor(longestEmpty, true);
       if (cut && chars(cut) >= 0.75 * chars(text)) return this.put(longestEmpty, m, cut, T[longestEmpty.kind].min);
@@ -600,6 +642,13 @@ export class WebLayout {
    */
   private sizeFor(st: Strand, text: string): number | null {
     const K = this.T[st.kind];
+    if (st.kind === 'ring') {
+      // the largest size, in small steps down to the smallest, at which it fits on one line or two
+      const empty = { ...st, pieces: [] };
+      const step = (K.size - K.min) / 8 || 1;
+      for (let size = K.size; size >= K.min - 0.01; size -= step) if (this.fitOn(empty, text, size)) return size;
+      return null;
+    }
     const size = Math.min(K.size, (st.room + st.spill) / widthAt(text, 1, K.weight, K.track[0]));
     return size >= K.min ? size : null;
   }
@@ -611,9 +660,11 @@ export class WebLayout {
    * for what shows, it runs on off the screen at its tightest, if the strand goes on
    * that far. Null if it doesn't fit.
    */
-  private fitOn(st: Strand, text: string, size: number) {
+  private fitOn(st: Strand, text: string, size: number): Fit | null {
     const K = this.T[st.kind];
     const last = st.pieces[st.pieces.length - 1];
+    // a strandie whose message went on to its second line is full
+    if (last?.text2 !== undefined) return null;
     const used = last ? last.start + last.len : 0;
     // the · sits next to the message before, which for an inward spoke is at the end of the reading
     const words = last ? (st.inward ? `${text} ·` : `· ${text}`) : text;
@@ -624,12 +675,45 @@ export class WebLayout {
     const tight = widthAt(words, size, K.weight, K.track[0]);
     // (a hair of tolerance: a size worked out to fill the strand exactly may round up)
     if (tight > room + 0.01) {
+      // On an empty strandie, rather than running off, it breaks after a word and goes on on the second line.
+      if (!last && st.line2 && st.room2 > 0) {
+        const wrapped = this.wrap(st, text, size);
+        if (wrapped) return wrapped;
+      }
       if (tight > room + st.spill + 0.01) return null;
       return { text: words, start: used + gap, len: tight };
     }
     const spread = widthAt(words, size, K.weight, K.track[1]);
     const len = Math.min(room, spread >= room * FILL ? spread : widthAt(words, size, K.weight, K.ideal));
     return { text: words, start: used + gap, len };
+  }
+
+  /**
+   * A message too long for an empty strandie's line, wrapped as in the owner's picture:
+   * it breaks after the last word that fits and goes on on the second line alongside,
+   * both lines starting at the strandie's start (the owner asked for no centring). A
+   * nearly full line is spread to fill it. Too long even for two lines, the second runs
+   * off the screen if it goes on past it. Null if it can't be wrapped (one long word, or
+   * too long anyway).
+   */
+  private wrap(st: Strand, text: string, size: number): Fit | null {
+    const K = this.T[st.kind];
+    const w = (t: string, track: number) => widthAt(t, size, K.weight, track);
+    const lay = (t: string, room: number) => {
+      const spread = w(t, K.track[1]);
+      return Math.min(room, spread >= room * FILL ? spread : w(t, K.ideal));
+    };
+    const words = text.split(' ');
+    let cut = 0;
+    for (let k = 1; k < words.length && w(words.slice(0, k).join(' '), K.track[0]) <= st.room + 0.01; k++) cut = k;
+    if (cut === 0) return null;
+    const first = words.slice(0, cut).join(' ');
+    const rest = words.slice(cut).join(' ');
+    const len = lay(first, st.room);
+    const tight2 = w(rest, K.track[0]);
+    if (tight2 <= st.room2 + 0.01) return { text: first, start: 0, len, text2: rest, start2: 0, len2: lay(rest, st.room2) };
+    if (tight2 <= st.room2 + st.spill2 + 0.01) return { text: first, start: 0, len, text2: rest, start2: 0, len2: tight2 };
+    return null;
   }
 
   private put(st: Strand, m: Item, text: string, size: number) {
@@ -647,15 +731,31 @@ export class WebLayout {
     const size = this.sizeFor(st, text);
     if (size) return this.put(st, m, text, size);
     const K = this.T[st.kind];
-    this.put(st, m, cutToFit(text, (t) => widthAt(t, K.min, K.weight, K.track[0]) <= st.room + st.spill, false)!, K.min);
+    this.put(st, m, cutToFit(text, (t) => this.fitOn(st, t, K.min) !== null, false)!, K.min);
   }
 
-  /** One message's words on its strand, in reading order. */
-  private runFor(st: Strand, p: Piece): Run {
+  /** One message's words on its strand, in reading order: one run, or two on a strandie's two lines. */
+  private runsFor(st: Strand, p: Piece): Run[] {
     const K = this.T[st.kind];
-    const points = st.line.slice(st.from + p.start, st.from + p.start + p.len);
-    if (st.inward) points.reverse();
-    return { text: p.text, points, d: pathOf(points), length: p.len, size: st.size, weight: K.weight, kind: st.kind, ids: [p.id] };
+    const run = (line: Line, from: number, text: string, start: number, len: number): Run => {
+      const points = line.slice(from + start, from + start + len);
+      if (st.inward) points.reverse();
+      return {
+        text,
+        points,
+        d: pathOf(points),
+        length: len,
+        size: st.size,
+        weight: K.weight,
+        kind: st.kind,
+        angle: st.angle,
+        depth: st.depth,
+        ids: [p.id],
+      };
+    };
+    const runs = [run(st.line, st.from, p.text, p.start, p.len)];
+    if (p.text2 !== undefined && st.line2) runs.push(run(st.line2, st.from2, p.text2, p.start2 ?? 0, p.len2 ?? 0));
+    return runs;
   }
 
   /**
@@ -709,42 +809,58 @@ export class WebLayout {
         pts = pts.reverse();
         ends = [s1, s0];
       }
-      const line = new Line(pts);
-      // the knot: letters stop where their whole band is clear of the spoke's letters
-      const midPt = line.pointAt(line.length / 2);
-      const signs = ends.map((spk) => Math.sign(side(spk, midPt)));
-      const clearAt = (e: number, s: number) => {
-        const spk = ends[e]!;
-        const sign = signs[e]!;
-        const q = line.pointAt(s);
-        const t = line.tangentAt(s);
-        const nn = { x: -t.y, y: t.x };
-        return Math.min(
-          sign * side(spk, { x: q.x + nn.x * hRing, y: q.y + nn.y * hRing }),
-          sign * side(spk, { x: q.x - nn.x * hRing, y: q.y - nn.y * hRing }),
-        );
+      /** Where along a line words may go, or null: the same rules for both of a strandie's lines. */
+      const track = (line: Line, minShown: number): Track | null => {
+        // the knot: letters stop where their whole band is clear of the spoke's letters
+        const midPt = line.pointAt(line.length / 2);
+        const signs = ends.map((spk) => Math.sign(side(spk, midPt)));
+        const clearAt = (e: number, s: number) => {
+          const spk = ends[e]!;
+          const sign = signs[e]!;
+          const q = line.pointAt(s);
+          const t = line.tangentAt(s);
+          const nn = { x: -t.y, y: t.x };
+          return Math.min(
+            sign * side(spk, { x: q.x + nn.x * hRing, y: q.y + nn.y * hRing }),
+            sign * side(spk, { x: q.x - nn.x * hRing, y: q.y - nn.y * hRing }),
+          );
+        };
+        // walk in from each end in 2px steps, then back out in 0.25px steps
+        let from = 0;
+        let to = line.length;
+        while (from < line.length && clearAt(0, from) < need) from += 2;
+        while (from > 0 && clearAt(0, from - 0.25) >= need) from -= 0.25;
+        while (to > from && clearAt(1, to) < need) to -= 2;
+        while (to < line.length && clearAt(1, to + 0.25) >= need) to += 0.25;
+        if (to - from < R.size * 2.2) return null;
+        // Its words start where it comes onto the screen, so every message begins
+        // where it can be read; past where it leaves the screen they run off.
+        while (from < to && !onScreen(line.pointAt(from))) from += 2;
+        let shownTo = from;
+        while (shownTo < to && onScreen(line.pointAt(shownTo))) shownTo += 2;
+        const shown = Math.min(shownTo, to) - from;
+        if (shown < minShown) return null;
+        // never nearer the hub than the spokes' own letters
+        for (let s = from; s <= to; s += 4) {
+          const q = line.pointAt(s);
+          if (dist(q, c) - this.hubRadius(Math.atan2(q.y - c.y, q.x - c.x)) < T.spokeStart + hRing) return null;
+        }
+        return { line, from, to, shown };
       };
-      // walk in from each end in 2px steps, then back out in 0.25px steps
-      let from = 0;
-      let to = line.length;
-      while (from < line.length && clearAt(0, from) < need) from += 2;
-      while (from > 0 && clearAt(0, from - 0.25) >= need) from -= 0.25;
-      while (to > from && clearAt(1, to) < need) to -= 2;
-      while (to < line.length && clearAt(1, to + 0.25) >= need) to += 0.25;
-      if (to - from < R.size * 2.2) return null;
-      // Its words start where it comes onto the screen, so every message begins
-      // where it can be read; past where it leaves the screen they run off.
-      while (from < to && !onScreen(line.pointAt(from))) from += 2;
-      let shownTo = from;
-      while (shownTo < to && onScreen(line.pointAt(shownTo))) shownTo += 2;
-      const shown = Math.min(shownTo, to) - from;
-      if (shown < S.minShown) return null;
-      // never nearer the hub than the spokes' own letters
-      for (let s = from; s <= to; s += 4) {
-        const q = line.pointAt(s);
-        if (dist(q, c) - this.hubRadius(Math.atan2(q.y - c.y, q.x - c.x)) < T.spokeStart + hRing) return null;
-      }
-      return { line, from, to, shown, top, mid };
+
+      const line = new Line(pts);
+      const first = track(line, S.minShown);
+      if (!first) return null;
+      // The second line, for a message too long for one: alongside the first, a line's
+      // height away on the side the letters' feet face, so it reads as the next line
+      // (toward the hub above it, away from it below).
+      const gap = LINE_GAP * R.size;
+      const below = line.points.map((q, j) => {
+        const t = line.tangentAt(line.cum[j]!);
+        return { x: q.x - t.y * gap, y: q.y + t.x * gap };
+      });
+      const second = track(new Line(below), R.size * 3);
+      return { ...first, second, top, mid };
     };
 
     const outer: Chord[] = [];
