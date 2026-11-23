@@ -6,6 +6,7 @@ import { createApp } from './app.js';
 import { openDb, type LocalDb } from './db/client.js';
 import { createServer } from './server.js';
 import { MailDeliveryError } from './mail/ResendMailer.js';
+import { loadConfig } from './config.js';
 
 let db: LocalDb;
 let dir: string;
@@ -61,4 +62,36 @@ it('reports delivery failure instead of claiming that a code was sent', async ()
   failMail = true;
   const response = await post('request-code', { email: 'fail@example.com' });
   expect(response.status).toBe(503); expect(await response.json()).toEqual({ error: 'email_unavailable' });
+});
+
+it('lets an unlisted email verify in public production mode while keeping resend limits and secure sessions', async () => {
+  const config = loadConfig({ NODE_ENV: 'production', AUTH_SECRET: 'p'.repeat(32),
+    DATABASE_URL: 'postgresql://test:test@localhost/test', PUBLIC_ORIGIN: 'https://gossamer.example',
+    MAIL_MODE: 'resend', RESEND_API_KEY: 'fake-test-key', MAIL_FROM: 'login@example.com',
+    SIGN_IN_MODE: 'public', SIGN_IN_ALLOWLIST: 'owner@example.com' });
+  const delivered: { email: string; code: string }[] = [];
+  const publicServer = createServer(createApp({ db, authSecret: config.authSecret,
+    publicOrigin: config.publicOrigin, signInAllowlist: config.signInAllowlist,
+    secureCookies: config.production, clock: { now: () => new Date() },
+    mailer: { sendSignInCode: async (email, code) => { delivered.push({ email, code }); } } }));
+  const request = (path: string, data: unknown) => publicServer.request(`/api/auth/${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', Origin: config.publicOrigin! },
+    body: JSON.stringify(data),
+  });
+  const email = 'new-public-user@example.com';
+  expect((await request('request-code', { email })).status).toBe(200);
+  expect(delivered).toHaveLength(1);
+  expect(delivered[0]!.email).toBe(email);
+  expect((await request('request-code', { email })).status).toBe(429);
+  expect(delivered).toHaveLength(1);
+  const verified = await request('verify-code', { email, code: delivered[0]!.code });
+  expect(verified.status).toBe(200);
+  expect(await verified.json()).toEqual({ user: { email } });
+  expect(verified.headers.get('set-cookie')).toMatch(/Secure/);
+  expect(verified.headers.get('set-cookie')).toMatch(/HttpOnly/);
+  const cookie = verified.headers.get('set-cookie')!.split(';')[0]!;
+  const current = await publicServer.request('/api/auth/me', { headers: { cookie } });
+  expect(current.status).toBe(200);
+  expect(await current.json()).toEqual({ user: { email } });
+  expect((await request('verify-code', { email, code: delivered[0]!.code })).status).toBe(401);
 });

@@ -173,7 +173,7 @@ branch includes the private-room screens and production backend together.
 
 ## Deployment
 
-The repository includes `render.yaml` for a free invited pilot: one Render Free Docker web
+The repository includes `render.yaml` for a free pilot with public email sign-in: one Render Free Docker web
 service serving the frontend and API, with PostgreSQL hosted separately on Neon Free.
 Hosting costs $0 per month while usage stays within the free limits; the domain is billed
 separately. Local Docker remains the development sandbox and must never use the live
@@ -206,11 +206,12 @@ Free-tier trade-offs:
 3. Create a Render account and connect the GitHub account that owns this repository.
    Choose **New > Blueprint**, select this repository and the `release/pilot` branch,
    and use the root `render.yaml`. Do not select an older `main` that lacks the release.
-4. Enter `DATABASE_URL` (the edited Neon string), `RESEND_API_KEY` and `SIGN_IN_ALLOWLIST`
+4. Enter `DATABASE_URL` (the edited Neon string) and `RESEND_API_KEY`
    privately in Render's prompted fields. Render prompts for these only on first creation.
    The sender is already set to `Gossamer <login@gossamer.blog>` using the verified domain.
-   The allowlist contains the email addresses permitted to sign in for this invited pilot;
-   include both test users, separated by commas. Never put the API key in frontend code.
+   `SIGN_IN_MODE=public` lets anyone verify their email and sign in. For invited testing,
+   set `SIGN_IN_MODE=invite` and `SIGN_IN_ALLOWLIST` to comma-separated test addresses.
+   Never put the API key in frontend code.
 5. Confirm that Render shows the **Free** instance type and no database, then apply. Render
    builds the image and runs `node dist/start-hosted.js`. Each start applies pending migrations before the server
    listens, because Free services have no pre-deploy command. If migrations fail, the
@@ -288,6 +289,24 @@ The migration command uses the compiled API, so build first. Run migrations once
 release. Render's pre-deploy command requires a paid plan, so the free Blueprint runs migrations
 at the start of each boot instead. Elsewhere, run them before starting the new release.
 
+### Open sign-in to everyone
+
+On an existing Render service, deploy a release containing public sign-in support and set
+`SIGN_IN_MODE=public` under **Environment**, then save and redeploy. An old
+`SIGN_IN_ALLOWLIST` is ignored in public mode and can be removed. Simply deleting the
+allowlist without setting the mode will not work: production defaults to `invite`.
+The Blueprint now sets public mode for new services.
+
+Everyone must still verify their email. Private rooms still require their invitation
+codes and membership. Test with an address that was never on the allowlist. To return
+to invited sign-in, set `SIGN_IN_MODE=invite` and a nonempty `SIGN_IN_ALLOWLIST`.
+This restricts new sign-ins; it does not revoke existing sessions.
+
+The existing per-email limits remain: at least 60 seconds between codes, at most five
+codes per hour, and five wrong guesses per code. These do not prevent abuse across many
+email addresses. Monitor Resend usage; shared abuse controls and bot protection are
+separate follow-up work. Public mode does not change the email provider's sending quota.
+
 Required production settings:
 
 - `NODE_ENV=production`
@@ -296,14 +315,15 @@ Required production settings:
 - `PUBLIC_ORIGIN`: the exact HTTPS website origin, without a trailing slash;
   optional on Render when using its assigned `RENDER_EXTERNAL_URL`
 - `MAIL_MODE=resend`, `RESEND_API_KEY`, and `MAIL_FROM`
-- `SIGN_IN_ALLOWLIST`: comma-separated invited email addresses for the initial pilot
+- `SIGN_IN_MODE=public` for open registration, or `SIGN_IN_MODE=invite` with
+  `SIGN_IN_ALLOWLIST` containing comma-separated invited email addresses
 
 The host supplies `PORT`. Production serves `apps/web/dist` by default; `WEB_DIST` can
 override that location. Package the compiled API, its SQL migrations and the web build.
 Check database backups and real email delivery before admitting users. Removing an email
 from the sign-in allowlist does not revoke an existing session.
 
-This release includes private rooms and their frontend. Public registration, broader abuse
+This release includes private rooms, their frontend and optional public registration. Broader abuse
 controls, reporting and moderation remain future work. Running locally, committing or
 pushing does not deploy a site.
 

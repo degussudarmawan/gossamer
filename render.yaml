@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://render.com/schema/render.yaml.json
-# Free invited-pilot infrastructure: one Render Free web service plus an external
+# Free pilot infrastructure: one Render Free web service plus an external
 # Neon Free PostgreSQL database. Free services sleep after 15 idle minutes and take
 # about a minute to wake. Use the reviewed release branch; no branch is hardcoded.
 previews:
@@ -38,7 +38,7 @@ services:
         sync: false
       - key: MAIL_FROM
         value: Gossamer <login@gossamer.blog>
-      - key: SIGN_IN_ALLOWLIST
-        sync: false
+      - key: SIGN_IN_MODE
+        value: public
       # PUBLIC_ORIGIN defaults to Render's assigned HTTPS URL.
       # Set it in the dashboard if you attach and use a custom website domain.

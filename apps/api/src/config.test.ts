@@ -31,6 +31,21 @@ it('rejects invalid ports/URLs without echoing secrets', () => {
   }
 });
 
+it('opens production sign-in only with an explicit public mode, ignoring an old allowlist', () => {
+  expect(loadConfig({ ...live, SIGN_IN_MODE: 'public' }).signInAllowlist).toBeUndefined();
+  expect(loadConfig({ ...live, SIGN_IN_MODE: 'public', SIGN_IN_ALLOWLIST: '' }).signInAllowlist).toBeUndefined();
+  expect(loadConfig({ ...live, SIGN_IN_MODE: 'invite' }).signInAllowlist).toEqual(['owner@example.com', 'friend@example.com']);
+  for (const mode of ['PUBLIC', 'invte', 'all']) {
+    expect(() => loadConfig({ ...live, SIGN_IN_MODE: mode })).toThrow('SIGN_IN_MODE must be invite or public');
+  }
+  expect(() => loadConfig({ ...live, SIGN_IN_MODE: 'invite', SIGN_IN_ALLOWLIST: '' })).toThrow();
+  expect(() => loadConfig({ SIGN_IN_MODE: 'invite' })).toThrow();
+  // Public access does not relax the other production requirements.
+  for (const key of ['AUTH_SECRET', 'DATABASE_URL', 'RESEND_API_KEY', 'MAIL_FROM', 'PUBLIC_ORIGIN']) {
+    expect(() => loadConfig({ ...live, SIGN_IN_MODE: 'public', [key]: '' })).toThrow();
+  }
+});
+
 it('uses the assigned Render HTTPS origin in production and lets a custom domain override it', () => {
   const render = { ...live, PUBLIC_ORIGIN: '', RENDER_EXTERNAL_URL: 'https://gossamer-pilot.onrender.com' };
   expect(loadConfig(render).publicOrigin).toBe(render.RENDER_EXTERNAL_URL);

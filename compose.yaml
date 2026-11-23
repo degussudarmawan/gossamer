@@ -45,6 +45,7 @@ services:
       MAIL_MODE: ${MAIL_MODE:-console}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       MAIL_FROM: ${MAIL_FROM:-}
+      SIGN_IN_MODE: ${SIGN_IN_MODE:-}
       SIGN_IN_ALLOWLIST: ${SIGN_IN_ALLOWLIST:-}
     depends_on:
       migrate:

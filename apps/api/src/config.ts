@@ -51,9 +51,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (!valid) throw new ConfigError('PUBLIC_ORIGIN must be an origin without a path or trailing slash (HTTPS in production)');
   }
   const invitedEmails = env.SIGN_IN_ALLOWLIST?.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-  const signInAllowlist = invitedEmails?.length ? invitedEmails : undefined;
-  // This first hosted release is an invited pilot; public launch needs shared abuse limits/moderation.
-  if (production && !signInAllowlist?.length) throw new ConfigError('SIGN_IN_ALLOWLIST is required for the production pilot');
+  // Existing hosted deployments stay invite-only until public access is explicitly enabled.
+  const signInMode = env.SIGN_IN_MODE || (production || invitedEmails?.length ? 'invite' : 'public');
+  if (signInMode !== 'invite' && signInMode !== 'public') {
+    throw new ConfigError('SIGN_IN_MODE must be invite or public');
+  }
+  if (signInMode === 'invite' && !invitedEmails?.length) {
+    throw new ConfigError('SIGN_IN_ALLOWLIST is required when SIGN_IN_MODE is invite');
+  }
+  const signInAllowlist = signInMode === 'invite' ? invitedEmails : undefined;
   return { production, port, dataDir: env.DATA_DIR || '.data/pg', databaseUrl, authSecret, mail,
     publicOrigin, webDist: env.WEB_DIST || undefined, signInAllowlist };
 }
