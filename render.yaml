@@ -32,7 +32,7 @@ services:
       - key: RESEND_API_KEY
         sync: false
       - key: MAIL_FROM
-        sync: false
+        value: Gossamer <login@gossamer.blog>
       - key: SIGN_IN_ALLOWLIST
         sync: false
       # PUBLIC_ORIGIN defaults to Render's assigned HTTPS URL.

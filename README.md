@@ -164,8 +164,8 @@ COMPOSE_PROJECT_NAME=gossamer-check APP_PORT=5301 node scripts/smoke-docker.mjs
 COMPOSE_PROJECT_NAME=gossamer-check APP_PORT=5301 docker compose down --volumes
 ```
 
-The image packages the frontend present on the branch being built. Integrate the room UI
-branch before expecting room screens in a backend-only branch's image.
+The image packages the frontend present on the branch being built. The `release/pilot`
+branch includes the private-room screens and production backend together.
 
 ## Deployment
 
@@ -175,20 +175,21 @@ the development sandbox and must never use the live database or its authenticati
 
 ### First release on Render
 
-1. Integrate the reviewed frontend and backend, including the latest intended frontend
-   commits. Run lint, type checks, tests, the production build, and the Docker smoke check.
-   Commit and push that combined release to GitHub. A local commit alone is not published.
+1. Use the combined `release/pilot` branch. It integrates the committed private-room
+   frontend with the production backend; ongoing design revisions stay on feature branches.
+   Run lint, type checks, tests, the production build, and the Docker smoke check before
+   publishing any new release. A local commit alone is not published.
 2. Create a Render account and connect the GitHub account that owns this repository.
-   Choose **New > Blueprint**, select this repository and the combined release branch,
+   Choose **New > Blueprint**, select this repository and the `release/pilot` branch,
    and use the root `render.yaml`. Do not select an older `main` that lacks the release.
 3. Review the resource names, Singapore region, and Render's displayed monthly cost before
    applying. The file selects paid web/database plans and 1 GB database storage. It does
    not provision anything until applied. Free PostgreSQL is unsuitable for durable pilot
    data because it expires after 30 days.
-4. Enter `RESEND_API_KEY`, `MAIL_FROM`, and `SIGN_IN_ALLOWLIST` privately in Render's
-   prompted fields. Use a verified Resend sending domain to email invited friends;
-   `onboarding@resend.dev` is limited to your own Resend account email. Include both
-   test users in the comma-separated allowlist. Never put these settings in frontend code.
+4. Enter `RESEND_API_KEY` and `SIGN_IN_ALLOWLIST` privately in Render's prompted fields.
+   The sender is already set to `Gossamer <login@gossamer.blog>` using the verified domain.
+   The allowlist contains the email addresses permitted to sign in for this invited pilot;
+   include both test users, separated by commas. Never put the API key in frontend code.
 5. Apply the Blueprint. Render builds the image, runs `node dist/db/migrate.js`, and starts
    the app. The readiness check must pass before the release is considered healthy.
    The initial Blueprint application creates resources and launches the first deployment;
@@ -263,9 +264,9 @@ override that location. Package the compiled API, its SQL migrations and the web
 Check database backups and real email delivery before admitting users. Removing an email
 from the sign-in allowlist does not revoke an existing session.
 
-This branch contains backend deployment preparation; integrate the reviewed room UI before
-releasing the complete app. Public registration, broader abuse controls, reporting and
-moderation remain future work. Running locally, committing or pushing does not deploy a site.
+This release includes private rooms and their frontend. Public registration, broader abuse
+controls, reporting and moderation remain future work. Running locally, committing or
+pushing does not deploy a site.
 
 ## Layout
 
