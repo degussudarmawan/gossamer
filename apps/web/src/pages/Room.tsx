@@ -12,12 +12,17 @@ import { action, note, quiet } from '../components/ui';
 import { useElementSize } from '../hooks/useElementSize';
 import { useFontReady } from '../hooks/useFontReady';
 import { useRoom } from '../hooks/useRoom';
+import { explain } from '../lib/explain';
+import { roomApi } from '../services';
 import { WebLayout } from '../web/WebLayout';
 
 type Panel = 'write' | 'read' | 'invite' | null;
 
-// One private room: the title in the middle, the web of messages around it, and
-// a short row of buttons. On arrival there is only the title and an instruction
+/** What opening a room hands this screen through navigation state. */
+type Arrival = { inviteCode?: string | null; opened?: boolean };
+
+// One room, private or public: the title in the middle, the web of messages
+// around it, and a short row of buttons. On arrival there is only the title and an instruction
 // to scroll; scrolling has the spider write the notes out one by one, on a stage
 // that stays pinned to the screen (as on the landing page). Writing, reading
 // everything in full, and the owner's controls each open in a panel.
@@ -27,6 +32,9 @@ export default function Room() {
   const [stage, { width, height }] = useElementSize<HTMLElement>();
   const [panel, setPanel] = useState<Panel>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
+  // joining a public room from this screen (arrived by its link, not from the list)
+  const [joining, setJoining] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // The web is laid out here rather than inside RoomWeb, because how far the page
   // scrolls depends on how many runs of words it has. fontReady is a dependency
@@ -53,17 +61,17 @@ export default function Room() {
   // A new room hands us its invite code through navigation state, never in the
   // address. We take it into memory and wipe it from the browser's history at
   // once, so a reload or the back button can't bring it back: it is shown once.
+  // A public room has no code, only `opened`.
   const location = useLocation();
   const navigate = useNavigate();
-  const [inviteCode, setInviteCode] = useState<string | null>(
-    () => (location.state as { inviteCode?: string } | null)?.inviteCode ?? null,
-  );
+  const [arrival] = useState<Arrival>(() => (location.state as Arrival | null) ?? {});
+  const [inviteCode, setInviteCode] = useState<string | null>(arrival.inviteCode ?? null);
   useEffect(() => {
     if (location.state) void navigate(location.pathname, { replace: true, state: null });
   }, [location.state, location.pathname, navigate]);
   // straight after opening a room, offer the link without being asked
   useEffect(() => {
-    if (inviteCode && status === 'ready') setPanel('invite');
+    if ((arrival.opened || inviteCode) && status === 'ready') setPanel('invite');
     // only when the room first becomes ready, not every time the code changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
@@ -117,15 +125,40 @@ export default function Room() {
     : room.prompt;
 
   // Each panel's title repeats the words that opened it.
-  const ownerLabel = room.closed ? 'reopen' : 'invite someone';
+  const isPublic = room.visibility === 'public';
+  const ownerLabel = room.closed ? 'reopen' : isPublic ? 'share the room' : 'invite someone';
+
+  // Someone who opened a public room by its link reads it before joining;
+  // writing in it needs them to join first.
+  const joinRoom = async () => {
+    setJoining(true);
+    setNotice(null);
+    try {
+      setRoom(await roomApi.joinPublic(room.id));
+    } catch (err) {
+      setNotice(
+        explain(err, {
+          room_closed: 'this room isn’t taking new people right now.',
+          not_found: 'this room isn’t public any more.',
+        }),
+      );
+    } finally {
+      setJoining(false);
+    }
+  };
 
   const actions = (
     <nav aria-label="this room" className="pointer-events-auto flex flex-wrap items-center justify-center gap-x-5">
-      {!room.closed && (
-        <button type="button" onClick={() => setPanel('write')} className={action}>
-          leave a note
-        </button>
-      )}
+      {!room.closed &&
+        (room.isMember ? (
+          <button type="button" onClick={() => setPanel('write')} className={action}>
+            leave a note
+          </button>
+        ) : (
+          <button type="button" disabled={joining} onClick={() => void joinRoom()} className={action}>
+            {joining ? 'joining…' : 'join this room'}
+          </button>
+        ))}
       {count > 0 && (
         <button type="button" onClick={() => setPanel('read')} className={action}>
           read in full
@@ -193,7 +226,13 @@ export default function Room() {
         {/* As at the end of the landing page: one line of caption and then the ways
             forward, all in gold. The web runs under this for now (the owner's call). */}
         <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 grid justify-items-center gap-1 px-6 text-center lg:bottom-5">
-          {caption && <p className={`line-clamp-2 max-w-xl lg:line-clamp-1 lg:max-w-2xl ${note}`}>{caption}</p>}
+          {notice ? (
+            <p role="alert" className={`max-w-xl ${note}`}>
+              {notice}
+            </p>
+          ) : (
+            caption && <p className={`line-clamp-2 max-w-xl lg:line-clamp-1 lg:max-w-2xl ${note}`}>{caption}</p>
+          )}
           {actions}
         </div>
 
@@ -201,6 +240,7 @@ export default function Room() {
           <Composer
             roomId={room.id}
             prompt={room.prompt}
+            isPublic={isPublic}
             onSent={async () => {
               close();
               await refresh();
@@ -222,7 +262,7 @@ export default function Room() {
 
         {room.isOwner && (
           <Sheet open={panel === 'invite'} onClose={close} title={room.closed ? 'closed for now' : ownerLabel}>
-            <OwnerTools room={room} inviteCode={inviteCode} onInvite={setInviteCode} onRoom={setRoom} />
+            <OwnerTools room={room} inviteCode={inviteCode} notes={count} onInvite={setInviteCode} onRoom={setRoom} />
           </Sheet>
         )}
       </section>

@@ -1,17 +1,26 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
+import Choice from '../components/Choice';
 import Page from '../components/Page';
 import { area, field, note, primary, quiet } from '../components/ui';
 import { explain } from '../lib/explain';
-import { ROOM_LIMITS } from '../lib/RoomApi';
+import { ROOM_LIMITS, type Visibility } from '../lib/RoomApi';
 import { roomApi } from '../services';
 
-// Opening a room: a name for it, and optionally a line telling friends what
-// you'd like them to write.
+const VISIBILITY = [
+  { value: 'private', label: 'private' },
+  { value: 'public', label: 'public' },
+] as const;
+
+// Opening a room: a name for it, optionally a line telling friends what you'd
+// like them to write, and whether it is private (joined with your link) or
+// public (anyone signed in can find it in the list of public rooms). Private
+// is the default: nothing is made public unless the person chooses it.
 export default function NewRoom() {
   const navigate = useNavigate();
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [visibility, setVisibility] = useState<Visibility>('private');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,12 +29,22 @@ export default function NewRoom() {
     setBusy(true);
     setError(null);
     try {
-      const { room, inviteCode } = await roomApi.create(title.trim(), prompt.trim());
+      const { room, inviteCode } = await roomApi.create(title.trim(), prompt.trim(), visibility);
       // The code is handed to the room screen in memory. It is shown once and
-      // never placed in the address.
-      void navigate(`/rooms/${room.id}`, { state: { inviteCode } });
+      // never placed in the address. `opened` has the room offer its link (or,
+      // for a public room, its address) straight away.
+      void navigate(`/rooms/${room.id}`, { state: { inviteCode, opened: true } });
     } catch (err) {
-      setError(explain(err));
+      setError(
+        explain(
+          err,
+          // The title is checked here before sending, so a public room refused
+          // as invalid is a backend that doesn't take `visibility` yet.
+          visibility === 'public'
+            ? { invalid_input: 'public rooms aren’t open yet. open this one as private for now.' }
+            : {},
+        ),
+      );
       setBusy(false);
     }
   };
@@ -62,7 +81,14 @@ export default function NewRoom() {
           />
         </div>
 
-        <p className={note}>private. only people with your link can join.</p>
+        <div className="grid justify-items-center gap-1">
+          <Choice legend="who can join?" showLegend value={visibility} options={VISIBILITY} onChange={setVisibility} />
+          <p className={note}>
+            {visibility === 'private'
+              ? 'only people with your link can join.'
+              : 'anyone signed in can find it in public rooms, read every note and leave one.'}
+          </p>
+        </div>
 
         <button type="submit" disabled={busy || !title.trim()} className={primary}>
           {busy ? 'opening…' : 'open the room'}

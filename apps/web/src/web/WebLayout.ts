@@ -1,5 +1,6 @@
 import { ringPoint } from '../components/OrbitSpider';
-import { TextRuler } from '../lib/TextRuler';
+import { dotPath, isInk, smoothPath, unwrap, type Ink } from '../lib/ink';
+import { InkPhrase, TextPhrase, ems, type InkShape, type Phrase } from './Phrase';
 
 // Where every message goes in a room's web. No React in here: given a screen
 // size, the room's seed and its messages, this works out the geometry, and
@@ -31,13 +32,23 @@ import { TextRuler } from '../lib/TextRuler';
 //     the web is full, the newest message takes over the strand that has gone
 //     longest without a new one.
 //
+// A handwritten note follows the same rules in the writer's own hand: its pad's
+// lines joined into one, sized like the typed letters, and bent along its strand
+// (see web/Phrase.ts and runsFor).
+//
 // The geometry is from the design prototype; the numbers in TYPE are its tuned values.
 
 export type Point = { x: number; y: number };
 
 /** One run of words along one strand of silk. */
 export type Run = {
+  /** Typed words, written along `d`. Empty for handwriting. */
   text: string;
+  /**
+   * Handwriting: the writer's strokes already bent along the strand (an SVG path in screen
+   * px), the pen's width, and how far the ink goes from the strand either way.
+   */
+  ink?: { d: string; pen: number; reach: number };
   /** The line the words follow, in reading order. */
   points: Point[];
   d: string;
@@ -61,7 +72,8 @@ export type Run = {
 /** The ring in the middle that holds the room's title. */
 export type Hub = { cx: number; cy: number; rx: number; ry: number };
 
-type Msg = { id: string; position: number; body: string };
+/** A message as the room has it. With `ink`, `body` is only its caption, which isn't on the web. */
+type Msg = { id: string; position: number; body: string; ink?: Ink | null };
 
 type Kind = 'spoke' | 'ring';
 
@@ -177,16 +189,10 @@ const LINE_GAP = 1.3;
 const FILL = 0.8;
 
 const FONT = 'Quicksand Variable';
-const rulers = { 400: new TextRuler(FONT, 400), 500: new TextRuler(FONT, 500) };
 
 const TAU = Math.PI * 2;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const dist = (p: Point, q: Point) => Math.hypot(q.x - p.x, q.y - p.y);
-const chars = (t: string) => [...t].length;
-const ems = (text: string, weight: 400 | 500) => rulers[weight].widthInEms(text);
-/** Width in px of `text` at `size`, with `track` ems added between letters. */
-const widthAt = (text: string, size: number, weight: 400 | 500, track: number) =>
-  (ems(text, weight) + track * (chars(text) - 1)) * size;
 const pathOf = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join('');
 /** Text along a direction reads upright: left to right, or bottom to top when nearly vertical. */
 const readable = (d: Point) => (Math.abs(d.x) > 0.2 * Math.abs(d.y) ? d.x > 0 : d.y < 0);
@@ -213,19 +219,18 @@ function shorten(body: string, max: number): string {
  * As much of `body` as `fits`, cut after a word and ended with …. If not even
  * the first word fits: cut inside it, or with `wholeWords`, null.
  */
-function cutToFit(body: string, fits: (text: string) => boolean, wholeWords: boolean): string | null {
+function cutToFit(body: Phrase, fits: (text: Phrase) => boolean, wholeWords: boolean): Phrase | null {
   if (fits(body)) return body;
-  let text = '';
-  for (const word of body.split(' ')) {
-    const next = text ? `${text} ${word}` : word;
-    if (!fits(`${next}…`)) break;
-    text = next;
+  let words = 0;
+  for (let k = 1; k <= body.words; k++) {
+    if (!fits(body.slice(0, k).ellipsis())) break;
+    words = k;
   }
-  if (text) return `${text.replace(/[\s,.;:!?-]+$/, '')}…`;
+  if (words) return body.slice(0, words).ellipsis(true);
   if (wholeWords) return null;
   let cut = body;
-  while (cut.length > 1 && !fits(`${cut}…`)) cut = cut.slice(0, -1);
-  return `${cut}…`;
+  for (let next = cut.shorter(); next && !fits(cut.ellipsis()); next = cut.shorter()) cut = next;
+  return cut.ellipsis();
 }
 
 /** TYPE with every letter size and spacing multiplied by `f`. */
@@ -306,6 +311,38 @@ export function pointAlong(points: Point[], u: number): Point {
   return line.pointAt(clamp(u, 0, 1) * line.length);
 }
 
+/** Handwriting segments longer than this (px) are split, so they follow the strand's curve. */
+const BEND_STEP = 6;
+
+/**
+ * Handwriting laid out flat (see InkShape) bent onto a strand, the way typed letters
+ * follow a <textPath>: along the line of points (in reading order) for x, and off it
+ * toward the letters' feet for y. Returns one SVG path for all its strokes and dots.
+ */
+function bend(points: Point[], shape: InkShape): { d: string; pen: number; reach: number } {
+  const line = new Line(points);
+  const onLine = (p: Point): Point => {
+    const q = line.pointAt(p.x);
+    const t = line.tangentAt(p.x);
+    return { x: q.x - t.y * p.y, y: q.y + t.x * p.y };
+  };
+  const parts: string[] = [];
+  for (const stroke of shape.strokes) {
+    const fine: Point[] = [];
+    stroke.forEach((p, i) => {
+      const prev = stroke[i - 1];
+      const steps = prev ? Math.ceil(dist(prev, p) / BEND_STEP) : 0;
+      for (let k = 1; k < steps; k++) {
+        fine.push({ x: prev!.x + ((p.x - prev!.x) * k) / steps, y: prev!.y + ((p.y - prev!.y) * k) / steps });
+      }
+      fine.push(p);
+    });
+    parts.push(smoothPath(fine.map(onLine)));
+  }
+  for (const dot of shape.dots) parts.push(dotPath(onLine(dot), shape.dot));
+  return { d: parts.join(''), pen: shape.pen, reach: shape.reach };
+}
+
 type Spoke = {
   angle: number;
   u: Point;
@@ -344,13 +381,13 @@ type Track = { line: Line; from: number; to: number; shown: number };
 /** One strandie between two spokes, and the second line alongside it, if there's room for one. */
 type Chord = Track & { second: Track | null; top: boolean; mid: number };
 
-type Item = { id: string; body: string; order: number };
+type Item = { id: string; phrase: Phrase; order: number };
 
 /**
  * Where a message's words go on a strand: the words, where they start and how long they
  * run; on a strandie, perhaps going on on its second line.
  */
-type Fit = { text: string; start: number; len: number; text2?: string; start2?: number; len2?: number };
+type Fit = { text: Phrase; start: number; len: number; text2?: Phrase; start2?: number; len2?: number };
 
 /** One message's words on a strand. */
 type Piece = Fit & { id: string; order: number };
@@ -443,8 +480,8 @@ export class WebLayout {
 
     const msgs: Item[] = [...messages]
       .sort((p, q) => p.position - q.position)
-      .map((m, order) => ({ id: m.id, body: m.body.replace(/\s+/g, ' ').trim(), order }))
-      .filter((m) => m.body.length > 0);
+      .map((m, order) => ({ id: m.id, phrase: this.phraseOf(m), order }))
+      .filter((m): m is Item => m.phrase !== null);
     if (msgs.length === 0 || this.rx <= 0 || this.ry <= 0) return;
 
     this.strands = this.frame();
@@ -454,6 +491,19 @@ export class WebLayout {
       .sort((a, b) => a.p.order - b.p.order);
     this.runs = placed.flatMap(({ st, p }) => this.runsFor(st, p));
     this.hidden = msgs.length - placed.length;
+  }
+
+  /**
+   * What goes on the web for a message: its handwriting if it has any, otherwise its
+   * words (cut at MAX_CHARS). Null for a message with neither.
+   */
+  private phraseOf(m: Msg): Phrase | null {
+    if (isInk(m.ink)) {
+      const line = unwrap(m.ink);
+      return line.words.length > 0 ? new InkPhrase(line) : null;
+    }
+    const body = m.body.replace(/\s+/g, ' ').trim();
+    return body.length > 0 ? new TextPhrase(shorten(body, MAX_CHARS)) : null;
   }
 
   /** Distance from the centre to the hub ring in direction `a`: the same wobbly oval the spider walks. */
@@ -548,7 +598,7 @@ export class WebLayout {
   // ---------- placing messages, in the order they were written ----------
 
   private place(m: Item) {
-    const text = shorten(m.body, MAX_CHARS);
+    const text = m.phrase;
     const T = this.T;
 
     // The first messages are the spokes: each takes a bare spoke that suits its
@@ -569,7 +619,7 @@ export class WebLayout {
           cost = 2 * Math.abs(1 - fit.len / st.room) + 3 * (Math.max(0, fit.len - st.room) / st.room) + 3 * (1 - size / S.size);
         } else {
           // too long for it even small: the less is cut, the better
-          cost = 6 + widthAt(text, S.min, S.weight, S.track[0]) / (st.room + st.spill);
+          cost = 6 + text.width(S.min, S.weight, S.track[0]) / (st.room + st.spill);
         }
         cost += 1.5 * (1 - away(st) / farthest) + 0.5 * Math.max(0, Math.abs(Math.sin(st.angle)) - 0.8);
         if (!best || cost < best.cost) best = { st, cost };
@@ -606,7 +656,7 @@ export class WebLayout {
       cutToFit(text, (t) => this.fitOn(st, t, T[st.kind].min) !== null, wholeWords);
     if (longestEmpty) {
       const cut = cutFor(longestEmpty, true);
-      if (cut && chars(cut) >= 0.75 * chars(text)) return this.put(longestEmpty, m, cut, T[longestEmpty.kind].min);
+      if (cut && cut.amount >= 0.75 * text.amount) return this.put(longestEmpty, m, cut, T[longestEmpty.kind].min);
     }
 
     // Otherwise it takes over the strand that has gone longest without a new
@@ -640,7 +690,7 @@ export class WebLayout {
    * The largest letter size (no smaller than the minimum) at which `text` fits an empty
    * strand, counting what runs off the screen, or null.
    */
-  private sizeFor(st: Strand, text: string): number | null {
+  private sizeFor(st: Strand, text: Phrase): number | null {
     const K = this.T[st.kind];
     if (st.kind === 'ring') {
       // the largest size, in small steps down to the smallest, at which it fits on one line or two
@@ -649,7 +699,7 @@ export class WebLayout {
       for (let size = K.size; size >= K.min - 0.01; size -= step) if (this.fitOn(empty, text, size)) return size;
       return null;
     }
-    const size = Math.min(K.size, (st.room + st.spill) / widthAt(text, 1, K.weight, K.track[0]));
+    const size = Math.min(K.size, (st.room + st.spill) / text.width(1, K.weight, K.track[0]));
     return size >= K.min ? size : null;
   }
 
@@ -660,19 +710,19 @@ export class WebLayout {
    * for what shows, it runs on off the screen at its tightest, if the strand goes on
    * that far. Null if it doesn't fit.
    */
-  private fitOn(st: Strand, text: string, size: number): Fit | null {
+  private fitOn(st: Strand, text: Phrase, size: number): Fit | null {
     const K = this.T[st.kind];
     const last = st.pieces[st.pieces.length - 1];
     // a strandie whose message went on to its second line is full
     if (last?.text2 !== undefined) return null;
     const used = last ? last.start + last.len : 0;
     // the · sits next to the message before, which for an inward spoke is at the end of the reading
-    const words = last ? (st.inward ? `${text} ·` : `· ${text}`) : text;
+    const words = last ? text.dotted(st.inward) : text;
     const gap = last ? (ems(' ', K.weight) + K.ideal) * size : 0;
     const room = st.room - used - gap;
     // once the words have reached the edge, a further message would be off the screen
     if (room <= 0) return null;
-    const tight = widthAt(words, size, K.weight, K.track[0]);
+    const tight = words.width(size, K.weight, K.track[0]);
     // (a hair of tolerance: a size worked out to fill the strand exactly may round up)
     if (tight > room + 0.01) {
       // On an empty strandie, rather than running off, it breaks after a word and goes on on the second line.
@@ -683,8 +733,8 @@ export class WebLayout {
       if (tight > room + st.spill + 0.01) return null;
       return { text: words, start: used + gap, len: tight };
     }
-    const spread = widthAt(words, size, K.weight, K.track[1]);
-    const len = Math.min(room, spread >= room * FILL ? spread : widthAt(words, size, K.weight, K.ideal));
+    const spread = words.width(size, K.weight, K.track[1]);
+    const len = Math.min(room, spread >= room * FILL ? spread : words.width(size, K.weight, K.ideal));
     return { text: words, start: used + gap, len };
   }
 
@@ -696,19 +746,19 @@ export class WebLayout {
    * off the screen if it goes on past it. Null if it can't be wrapped (one long word, or
    * too long anyway).
    */
-  private wrap(st: Strand, text: string, size: number): Fit | null {
+  private wrap(st: Strand, text: Phrase, size: number): Fit | null {
     const K = this.T[st.kind];
-    const w = (t: string, track: number) => widthAt(t, size, K.weight, track);
-    const lay = (t: string, room: number) => {
+    const w = (t: Phrase, track: number) => t.width(size, K.weight, track);
+    const lay = (t: Phrase, room: number) => {
       const spread = w(t, K.track[1]);
       return Math.min(room, spread >= room * FILL ? spread : w(t, K.ideal));
     };
-    const words = text.split(' ');
+    const words = text.words;
     let cut = 0;
-    for (let k = 1; k < words.length && w(words.slice(0, k).join(' '), K.track[0]) <= st.room + 0.01; k++) cut = k;
+    for (let k = 1; k < words && w(text.slice(0, k), K.track[0]) <= st.room + 0.01; k++) cut = k;
     if (cut === 0) return null;
-    const first = words.slice(0, cut).join(' ');
-    const rest = words.slice(cut).join(' ');
+    const first = text.slice(0, cut);
+    const rest = text.slice(cut, words);
     const len = lay(first, st.room);
     const tight2 = w(rest, K.track[0]);
     if (tight2 <= st.room2 + 0.01) return { text: first, start: 0, len, text2: rest, start2: 0, len2: lay(rest, st.room2) };
@@ -716,7 +766,7 @@ export class WebLayout {
     return null;
   }
 
-  private put(st: Strand, m: Item, text: string, size: number) {
+  private put(st: Strand, m: Item, text: Phrase, size: number) {
     const fit = this.fitOn(st, text, size);
     if (!fit) return;
     st.size = size;
@@ -727,7 +777,7 @@ export class WebLayout {
    * Puts a message on an empty strand as large as it fits (running off the screen if it
    * must), cut short only if it is too long even for that at the smallest size.
    */
-  private putFitting(st: Strand, m: Item, text: string) {
+  private putFitting(st: Strand, m: Item, text: Phrase) {
     const size = this.sizeFor(st, text);
     if (size) return this.put(st, m, text, size);
     const K = this.T[st.kind];
@@ -737,11 +787,12 @@ export class WebLayout {
   /** One message's words on its strand, in reading order: one run, or two on a strandie's two lines. */
   private runsFor(st: Strand, p: Piece): Run[] {
     const K = this.T[st.kind];
-    const run = (line: Line, from: number, text: string, start: number, len: number): Run => {
+    const run = (line: Line, from: number, text: Phrase, start: number, len: number): Run => {
       const points = line.slice(from + start, from + start + len);
       if (st.inward) points.reverse();
       return {
-        text,
+        text: text.text,
+        ...(text.ink ? { ink: bend(points, text.ink(st.size)) } : {}),
         points,
         d: pathOf(points),
         length: len,

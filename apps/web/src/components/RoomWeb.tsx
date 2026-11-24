@@ -72,26 +72,59 @@ function RunText({
         <path id={`t-${id}`} d={run.d} />
         {reveal && (
           <mask id={`m-${id}`} maskUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%">
-            <motion.path d={run.d} fill="none" stroke="white" strokeWidth={run.size * 2.4} style={{ pathLength: reveal }} />
+            {/* wide enough to uncover the letters, or handwriting that reaches further */}
+            <motion.path
+              d={run.d}
+              fill="none"
+              stroke="white"
+              strokeWidth={Math.max(run.size * 2.4, (run.ink?.reach ?? 0) * 2.2)}
+              style={{ pathLength: reveal }}
+            />
           </mask>
         )}
       </defs>
-      <text
-        className="pointer-events-auto cursor-pointer fill-ink font-hand"
-        fontSize={run.size}
-        fontWeight={run.weight}
-        // rings are the finer silk
-        opacity={run.kind === 'ring' ? 0.92 : 1}
-        // centres the letters on the strand line, which the layout's no-overlap spacing assumes
-        dy={`${dy.toFixed(3)}em`}
-        mask={reveal ? `url(#m-${id})` : undefined}
-        onClick={() => run.ids[0] && onPick(run.ids[0])}
-      >
-        {/* letters spaced to fill the strand exactly */}
-        <textPath href={`#t-${id}`} textLength={run.length} lengthAdjust="spacing">
-          {run.text}
-        </textPath>
-      </text>
+      {run.ink ? (
+        // A handwritten note: the writer's own strokes, already bent along the strand by
+        // the layout, under the same reveal as typed words. Pen lines are too thin to aim
+        // at, so an unseen wider line along the strand takes the click.
+        <>
+          <path
+            d={run.ink.d}
+            fill="none"
+            className="stroke-ink"
+            strokeWidth={run.ink.pen}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity={run.kind === 'ring' ? 0.92 : 1}
+            mask={reveal ? `url(#m-${id})` : undefined}
+          />
+          <path
+            d={run.d}
+            fill="none"
+            stroke="transparent"
+            strokeWidth={run.size * 1.2}
+            className="pointer-events-auto cursor-pointer"
+            onClick={() => run.ids[0] && onPick(run.ids[0])}
+          />
+        </>
+      ) : (
+        <text
+          className="pointer-events-auto cursor-pointer fill-ink font-hand"
+          fontSize={run.size}
+          fontWeight={run.weight}
+          // rings are the finer silk
+          opacity={run.kind === 'ring' ? 0.92 : 1}
+          // centres the letters on the strand line, which the layout's no-overlap spacing assumes
+          dy={`${dy.toFixed(3)}em`}
+          mask={reveal ? `url(#m-${id})` : undefined}
+          onClick={() => run.ids[0] && onPick(run.ids[0])}
+        >
+          {/* letters spaced to fill the strand exactly */}
+          <textPath href={`#t-${id}`} textLength={run.length} lengthAdjust="spacing">
+            {run.text}
+          </textPath>
+        </text>
+      )}
     </>
   );
 }

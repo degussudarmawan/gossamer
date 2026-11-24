@@ -1,9 +1,16 @@
 import type { ApiClient } from './ApiClient';
+import { isInk, type Ink } from './ink';
 
-// The backend's private-room endpoints as plain methods. The contract is
+// The backend's room endpoints as plain methods. The contract is
 // docs/BACKEND.md on the backend branch. Whether someone may see or change a
 // room is always the backend's decision: a 404 here means "not for you" as
 // much as "doesn't exist", and screens must not try to tell the two apart.
+//
+// Public rooms are not in the backend yet. What this file expects of them is
+// written down in docs/handoffs/public-rooms-ui.md.
+
+/** Private rooms are joined with an invite link; public ones can be found in a list. */
+export type Visibility = 'private' | 'public';
 
 export type Room = {
   id: string;
@@ -16,20 +23,41 @@ export type Room = {
   closed: boolean;
   createdAt: string;
   isOwner: boolean;
+  visibility: Visibility;
+  /** False only for a public room the person is looking at without having joined. */
+  isMember: boolean;
 };
+
+// A backend without public rooms leaves out the two newer fields. Every room it
+// sends is then private, and only ever sent to its members.
+type RoomFromServer = Omit<Room, 'visibility' | 'isMember'> & Partial<Pick<Room, 'visibility' | 'isMember'>>;
+
+const complete = (room: RoomFromServer): Room => ({
+  ...room,
+  visibility: room.visibility ?? 'private',
+  isMember: room.isMember ?? true,
+});
 
 export type Message = {
   id: string;
+  /** The note's words. For a handwritten note, its caption: empty when the writer gave none. */
   body: string;
   /** A name the writer chose to show. Not checked against who they are. */
   signature: string | null;
   /** This message's permanent number in the room, starting at 1. Never reused. */
   position: number;
   createdAt: string;
+  /** The writer's handwriting, for a note written by hand (docs/handoffs/handwritten-notes-api.md). */
+  ink: Ink | null;
 };
 
+// A backend without handwritten notes leaves `ink` out.
+type MessageFromServer = Omit<Message, 'ink'> & { ink?: unknown };
+
+/** A typed note has `body`; a handwritten one has `ink`, and `body` only as its caption. */
 export type Draft = {
-  body: string;
+  body?: string;
+  ink?: Ink;
   signature?: string;
   /** One id per intended message, kept across retries so a retry can't post twice. */
   requestId: string;
@@ -40,26 +68,57 @@ export const ROOM_LIMITS = { title: 120, prompt: 1000, body: 2000, signature: 80
 export class RoomApi {
   constructor(private readonly http: ApiClient) {}
 
-  /** The invite code is returned here and never again; show it straight away. */
-  create(title: string, prompt: string): Promise<{ room: Room; inviteCode: string }> {
-    return this.http.post('/rooms', prompt ? { title, prompt } : { title });
+  /**
+   * A private room's invite code is returned here and never again; show it
+   * straight away. A public room needs no code, so it may come back null.
+   * `visibility` is only sent for a public room, so a backend that doesn't
+   * know the field still opens private rooms (and refuses a public one with
+   * invalid_input rather than quietly making it private).
+   */
+  async create(title: string, prompt: string, visibility: Visibility): Promise<{ room: Room; inviteCode: string | null }> {
+    const made = await this.http.post<{ room: RoomFromServer; inviteCode?: string | null }>('/rooms', {
+      title,
+      ...(prompt ? { prompt } : {}),
+      ...(visibility === 'public' ? { visibility } : {}),
+    });
+    return { room: complete(made.room), inviteCode: made.inviteCode ?? null };
   }
 
+  /** The rooms this person opened or joined. */
   async list(): Promise<Room[]> {
-    return (await this.http.get<{ rooms: Room[] }>('/rooms')).rooms;
+    return (await this.http.get<{ rooms: RoomFromServer[] }>('/rooms')).rooms.map(complete);
+  }
+
+  /** Open public rooms anyone signed in can join, newest first. */
+  async listPublic(): Promise<Room[]> {
+    return (await this.http.get<{ rooms: RoomFromServer[] }>('/rooms/public')).rooms.map(complete);
   }
 
   /** Joining twice is harmless. The code travels in the request body, never in a URL. */
   async join(code: string): Promise<Room> {
-    return (await this.http.post<{ room: Room }>('/rooms/join', { code })).room;
+    return complete((await this.http.post<{ room: RoomFromServer }>('/rooms/join', { code })).room);
+  }
+
+  /** Joins a public room, which needs no code. Joining twice is harmless. */
+  async joinPublic(id: string): Promise<Room> {
+    return complete((await this.http.post<{ room: RoomFromServer }>(`/rooms/${id}/join`)).room);
   }
 
   async get(id: string): Promise<Room> {
-    return (await this.http.get<{ room: Room }>(`/rooms/${id}`)).room;
+    return complete((await this.http.get<{ room: RoomFromServer }>(`/rooms/${id}`)).room);
   }
 
   async setClosed(id: string, closed: boolean): Promise<Room> {
-    return (await this.http.patch<{ room: Room }>(`/rooms/${id}`, { closed })).room;
+    return complete((await this.http.patch<{ room: RoomFromServer }>(`/rooms/${id}`, { closed })).room);
+  }
+
+  /**
+   * Owner only. Going private takes the room out of the public list and leaves
+   * everyone who joined in it; going public lists it, and makes every note in
+   * it readable by anyone signed in. The invite code is not touched.
+   */
+  async setVisibility(id: string, visibility: Visibility): Promise<Room> {
+    return complete((await this.http.patch<{ room: RoomFromServer }>(`/rooms/${id}`, { visibility })).room);
   }
 
   /** Replaces the invite code. The old one stops admitting people; current members stay. */
@@ -72,10 +131,11 @@ export class RoomApi {
     const all: Message[] = [];
     let after = 0;
     for (;;) {
-      const page = await this.http.get<{ messages: Message[]; nextAfter: number }>(
+      const page = await this.http.get<{ messages: MessageFromServer[]; nextAfter: number }>(
         `/rooms/${id}/messages?after=${after}`,
       );
-      all.push(...page.messages);
+      // ink the screens can't draw is left out rather than breaking the room
+      all.push(...page.messages.map((m) => ({ ...m, ink: isInk(m.ink) ? m.ink : null })));
       if (page.messages.length < 100) return all;
       after = page.nextAfter;
     }
