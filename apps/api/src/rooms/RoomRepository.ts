@@ -1,11 +1,12 @@
 import { and, asc, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { messages, roomMembers, rooms } from '../db/schema.js';
+import type { Ink } from './Ink.js';
 
 export type Room = typeof rooms.$inferSelect;
 export type Visibility = Room['visibility'];
 export type RoomUpdate = { closed?: boolean; visibility?: Visibility };
-export type MessageInput = { body: string; signature?: string; requestId: string };
+export type MessageInput = { body: string; ink?: Ink; signature?: string; requestId: string };
 
 export class RoomRepository {
   constructor(private readonly db: Db) {}
@@ -60,7 +61,7 @@ export class RoomOperations {
     return room!;
   }
   listMessages(after: number) {
-    return this.tx.select({ id: messages.id, body: messages.body, signature: messages.signature,
+    return this.tx.select({ id: messages.id, body: messages.body, ink: messages.ink, signature: messages.signature,
       position: messages.position, createdAt: messages.createdAt }).from(messages)
       .where(and(eq(messages.roomId, this.roomId), isNull(messages.removedAt), gt(messages.position, after)))
       .orderBy(asc(messages.position)).limit(100);
@@ -75,7 +76,7 @@ export class RoomOperations {
     return message!;
   }
   async remove(id: string, at: Date) {
-    const result = await this.tx.update(messages).set({ removedAt: at, body: '', signature: null })
+    const result = await this.tx.update(messages).set({ removedAt: at, body: '', signature: null, ink: null })
       .where(and(eq(messages.roomId, this.roomId), eq(messages.id, id))).returning({ id: messages.id });
     return result.length > 0;
   }

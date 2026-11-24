@@ -78,13 +78,25 @@ Owners can manage visibility, invitations, contributions and message removal.
 | PATCH | `/api/rooms/:id` | Owner sets `closed`, `visibility`, or both |
 | POST | `/api/rooms/:id/invite` | Owner rotates a private room's invitation code |
 | GET | `/api/rooms/:id/messages?after=0` | Read messages, up to 100 per page |
-| POST | `/api/rooms/:id/messages` | Send `{body, signature?, requestId}` |
+| POST | `/api/rooms/:id/messages` | Send `{body?, ink?, signature?, requestId}` |
 | DELETE | `/api/rooms/:id/messages/:messageId` | Owner removes a message |
 
 Generate a UUID `requestId` for each intended message and reuse it on network retries.
 Message positions stay stable. Invitation rotation prevents new joins with the old code
 but does not evict existing members. Private rooms are access-controlled, not end-to-end
 encrypted. Signatures are optional display text, not verified identities.
+
+Handwritten notes store `ink` as JSON pen strokes, with an optional text caption in `body`.
+Typed notes still require a nonempty body. If a caption is supplied, it must also be nonempty
+after trimming; omit it for an uncaptioned drawing. Every read message includes `ink` (an
+object for handwriting, `null` for typed notes). Message creation accepts up to 64 KiB;
+other room routes remain limited to 16 KiB. The ink format is `{v:1, lines, width, strokes}`:
+1–3 lines, width 100–2000, 1–400 strokes of 2–2000 integers each in x/y pairs, and at most
+8000 coordinate numbers total. Coordinates must fit within the pad (x ≤ width, y ≤ lines × 100).
+Extra fields are rejected. These limits and stroke order are preserved without converting
+drawings to text or images. Retries compare caption, signature and ink independently of JSON
+object-key order. Removing a note clears its ink as well as its text. Migration `0003` adds
+a nullable JSONB column, leaving existing notes as typed notes with `ink: null`.
 
 Room responses include `visibility` (`private` or `public`) and `isMember`. Public creation
 returns `inviteCode: null`; its shareable address is `/rooms/:id`. Closing a public room

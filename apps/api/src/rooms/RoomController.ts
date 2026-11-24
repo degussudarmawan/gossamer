@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { AuthController } from '../auth/AuthController.js';
 import type { User } from '../users/UserRepository.js';
 import { RoomError, type RoomService } from './RoomService.js';
+import { messageSchema } from './Ink.js';
 
 const visibility = z.enum(['private', 'public']);
 
@@ -23,7 +24,13 @@ export class RoomController {
       c.set('user', user);
       await next();
     });
-    app.use('*', bodyLimit({ maxSize: 16 * 1024 }));
+    const normalLimit = bodyLimit({ maxSize: 16 * 1024 });
+    const noteLimit = bodyLimit({ maxSize: 64 * 1024 });
+    app.use('*', (c, next) => {
+      // Only the message creation route accepts a larger body for pen coordinates.
+      const sending = c.req.method === 'POST' && /^\/api\/rooms\/[^/]+\/messages$/.test(c.req.path);
+      return (sending ? noteLimit : normalLimit)(c, next);
+    });
     app.onError((error, c) => {
       if (!(error instanceof RoomError)) throw error;
       const status = error.code === 'not_found' ? 404 : error.code === 'forbidden' ? 403 : 409;
@@ -59,8 +66,7 @@ export class RoomController {
       const messages = await this.service.messages(c.req.param('id'), c.get('user').id, after.data);
       return c.json({ messages, nextAfter: messages.at(-1)?.position ?? after.data });
     });
-    app.post('/:id/messages', body(z.object({ body: z.string().trim().min(1).max(2000),
-      signature: z.string().trim().min(1).max(80).optional(), requestId: z.uuid() }).strict()),
+    app.post('/:id/messages', body(messageSchema),
       async (c) => c.json({ message: await this.service.send(c.req.param('id'), c.get('user').id, c.req.valid('json')) }, 201));
     app.delete('/:id/messages/:messageId', async (c) => {
       const messageId = c.req.param('messageId');

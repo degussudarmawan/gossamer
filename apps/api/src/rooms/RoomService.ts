@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Clock } from '../shared/Clock.js';
 import { type MessageInput, type Room, type RoomUpdate, type Visibility, RoomRepository } from './RoomRepository.js';
+import { sameInk } from './Ink.js';
 
 export class RoomError extends Error {
   constructor(public readonly code: 'not_found' | 'forbidden' | 'room_closed' | 'retry_conflict' | 'public_room') { super(code); }
@@ -71,7 +72,8 @@ export class RoomService {
       requireMember(member);
       const existing = await ops.existing(userId, input.requestId);
       if (existing) {
-        if (existing.removedAt || existing.body !== input.body || existing.signature !== (input.signature ?? null)) {
+        if (existing.removedAt || existing.body !== input.body || existing.signature !== (input.signature ?? null)
+          || !sameInk(existing.ink, input.ink)) {
           throw new RoomError('retry_conflict');
         }
         return { id: existing.id, position: existing.position };

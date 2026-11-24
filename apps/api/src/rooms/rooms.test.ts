@@ -3,9 +3,10 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createApp } from '../app.js';
 import { openDb, type LocalDb } from '../db/client.js';
-import { rooms } from '../db/schema.js';
+import { messages, rooms } from '../db/schema.js';
+import type { Ink } from './Ink.js';
 
-type MessagePage = { messages: { id: string; body: string; position: number }[]; nextAfter: number };
+type MessagePage = { messages: { id: string; body: string; ink: Ink | null; position: number }[]; nextAfter: number };
 type Receipt = { message: { id: string; position: number } };
 let db: LocalDb;
 let app: ReturnType<typeof createApp>;
@@ -255,4 +256,123 @@ it('rejects invalid visibility changes and reserved names used as room IDs', asy
     expect((await request(`/${id}/join`, owner, 'POST')).status).toBe(400);
     expect((await request(`/${id}/messages`, owner)).status).toBe(400);
   }
+});
+
+const drawing: Ink = { v: 1, lines: 3, width: 864, strokes: [[112, 40, 115, 52, 119, 71, 121, 80], [140, 61]] };
+const note = (id: string, data: Record<string, unknown>, cookie = owner) =>
+  request(`/${id}/messages`, cookie, 'POST', { requestId: randomUUID(), ...data });
+
+it('round-trips handwriting with and without captions, alongside typed messages', async () => {
+  const { room } = await create();
+  expect((await note(room.id, { ink: drawing, body: '  Hello  ', signature: '  Friend  ' })).status).toBe(201);
+  expect((await note(room.id, { ink: drawing })).status).toBe(201);
+  expect((await note(room.id, { body: 'Typed' })).status).toBe(201);
+  const page = await (await request(`/${room.id}/messages`, owner)).json() as MessagePage;
+  expect(page.messages).toMatchObject([
+    { body: 'Hello', ink: drawing, signature: 'Friend', position: 1 },
+    { body: '', ink: drawing, signature: null, position: 2 },
+    { body: 'Typed', ink: null, position: 3 },
+  ]);
+  const secondPage = await (await request(`/${room.id}/messages?after=1`, owner)).json() as MessagePage;
+  expect(secondPage.messages.map((m) => m.position)).toEqual([2, 3]);
+  expect(secondPage.nextAfter).toBe(3);
+});
+
+it('rejects empty notes, explicit empty captions, invalid ink and unexpected fields without storing anything', async () => {
+  const { room } = await create();
+  const invalidInk: unknown[] = [null, {}, [], 'svg', { ...drawing, v: 2 }, { ...drawing, extra: true },
+    { ...drawing, lines: 0 }, { ...drawing, lines: 4 }, { ...drawing, width: 99 }, { ...drawing, width: 2001 },
+    { ...drawing, lines: 1.5 }, { ...drawing, width: 200.5 }, { ...drawing, strokes: [] },
+    { ...drawing, strokes: [[]] }, { ...drawing, strokes: [[0]] }, { ...drawing, strokes: [[0, 0, 1]] },
+    { ...drawing, strokes: [[-1, 0]] }, { ...drawing, strokes: [[865, 0]] }, { ...drawing, strokes: [[0, 301]] },
+    { ...drawing, strokes: [[0, 0.1]] }, { ...drawing, strokes: [['1', 0]] }, { ...drawing, strokes: [[0, null]] },
+    { ...drawing, strokes: [Array(2002).fill(0)] }, { ...drawing, strokes: Array.from({ length: 401 }, () => [0, 0]) },
+    { ...drawing, strokes: [...Array.from({ length: 4 }, () => Array(2000).fill(0)), [0, 0]] },
+  ];
+  const badNotes = [{}, { body: '' }, { body: '  ' }, { body: null }, { ink: drawing, body: '' },
+    { ink: drawing, body: '  ' }, { ink: drawing, body: 'a'.repeat(2001) }, { ink: drawing, signature: '' },
+    { ink: drawing, html: '<script/>' }, ...invalidInk.map((ink) => ({ ink }))];
+  for (const data of badNotes) {
+    const result = await note(room.id, data);
+    expect(result.status, JSON.stringify(data).slice(0, 150)).toBe(400);
+    expect(await result.json()).toEqual({ error: 'invalid_input' });
+  }
+  expect(await (await request(`/${room.id}/messages`, owner)).json()).toEqual({ messages: [], nextAfter: 0 });
+});
+
+it('accepts maximum legal ink above 16 KiB but caps note requests at 64 KiB and other routes at 16 KiB', async () => {
+  const { room } = await create();
+  const largest: Ink = { v: 1, lines: 3, width: 2000,
+    strokes: Array.from({ length: 4 }, () => Array.from({ length: 2000 }, (_, i) => i % 2 ? 300 : 2000)) };
+  expect(Buffer.byteLength(JSON.stringify(largest))).toBeGreaterThan(16 * 1024);
+  const sent = await note(room.id, { ink: largest, body: '界'.repeat(2000), signature: '界'.repeat(80) });
+  expect(sent.status).toBe(201);
+  const page = await (await request(`/${room.id}/messages`, owner)).json() as MessagePage;
+  expect(page.messages[0]!.ink).toEqual(largest);
+  const paths = [
+    ['', 'POST'], [`/${room.id}`, 'PATCH'], ['/join', 'POST'], [`/${room.id}/invite`, 'POST'],
+    [`/${room.id}/join`, 'POST'], [`/${room.id}/messages`, 'PATCH'],
+  ];
+  for (const [path, method] of paths) {
+    expect((await request(path!, owner, method!, { pad: 'a'.repeat(17 * 1024) })).status).toBe(413);
+  }
+  // Raw whitespace counts too; even a small logical JSON object cannot bypass the byte cap.
+  const over = await app.request(`/api/rooms/${room.id}/messages`, { method: 'POST',
+    headers: { cookie: owner, 'content-type': 'application/json' },
+    body: ' '.repeat(64 * 1024) + JSON.stringify({ ink: drawing, requestId: randomUUID() }) });
+  expect(over.status).toBe(413);
+  expect((await db.select().from(messages)).length).toBe(1);
+});
+
+it('compares ink structurally for retries, including omitted captions and JSONB key order', async () => {
+  const { room } = await create();
+  const requestId = randomUUID();
+  const original = await note(room.id, { ink: drawing, requestId });
+  expect(original.status).toBe(201);
+  const receipt = await original.json();
+  const reordered = { strokes: drawing.strokes, width: drawing.width, lines: drawing.lines, v: 1 };
+  const retry = await note(room.id, { ink: reordered, requestId });
+  expect(retry.status).toBe(201);
+  expect(await retry.json()).toEqual(receipt);
+  for (const data of [{ ink: { ...drawing, width: 900 } }, { ink: { ...drawing, lines: 2 } },
+    { ink: { ...drawing, strokes: [[0, 0]] } }, { ink: drawing, body: 'New caption' },
+    { ink: drawing, signature: 'New signature' }, { body: 'Typed instead' }]) {
+    const conflict = await note(room.id, { ...data, requestId });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toEqual({ error: 'retry_conflict' });
+  }
+  const typedId = randomUUID();
+  expect((await note(room.id, { body: 'Same caption', requestId: typedId })).status).toBe(201);
+  expect((await note(room.id, { body: 'Same caption', ink: drawing, requestId: typedId })).status).toBe(409);
+  const concurrentId = randomUUID();
+  const concurrent = await Promise.all([note(room.id, { ink: drawing, requestId: concurrentId }),
+    note(room.id, { ink: reordered, requestId: concurrentId })]);
+  expect(concurrent.map((r) => r.status)).toEqual([201, 201]);
+  const [a, b] = await Promise.all(concurrent.map((r) => r.json()));
+  expect(a).toEqual(b);
+});
+
+it('erases removed handwriting and retains member, owner and closed-room permissions', async () => {
+  const { room, inviteCode } = await create();
+  expect((await note(room.id, { ink: drawing }, stranger)).status).toBe(404);
+  expect((await request(`/${room.id}/messages`, stranger)).status).toBe(404);
+  await join(inviteCode);
+  const requestId = randomUUID();
+  const receipt = await (await note(room.id, { ink: drawing, requestId }, friend)).json() as Receipt;
+  const removePath = `/${room.id}/messages/${receipt.message.id}`;
+  expect((await request(removePath, friend, 'DELETE')).status).toBe(403);
+  await request(`/${room.id}`, owner, 'PATCH', { closed: true });
+  expect((await note(room.id, { ink: drawing }, friend)).status).toBe(409);
+  expect((await note(room.id, { ink: drawing, requestId }, friend)).status).toBe(201);
+  expect((await request(removePath, owner, 'DELETE')).status).toBe(200);
+  const [stored] = await db.select().from(messages).where(eq(messages.id, receipt.message.id));
+  expect(stored).toMatchObject({ ink: null, body: '', signature: null });
+  expect(stored!.removedAt).not.toBeNull();
+  expect((await note(room.id, { ink: drawing, requestId }, friend)).status).toBe(409);
+  expect(await (await request(`/${room.id}/messages`, friend)).json()).toEqual({ messages: [], nextAfter: 0 });
+  const publicRoom = await createPublic();
+  expect((await note(publicRoom.id, { ink: drawing }, stranger)).status).toBe(404);
+  expect((await note(publicRoom.id, { ink: drawing })).status).toBe(201);
+  const page = await (await request(`/${publicRoom.id}/messages`, stranger)).json() as MessagePage;
+  expect(page.messages[0]!.ink).toEqual(drawing);
 });

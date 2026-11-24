@@ -1,4 +1,5 @@
-import { index, integer, pgEnum, pgTable, primaryKey, uniqueIndex, boolean, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, jsonb, pgEnum, pgTable, primaryKey, uniqueIndex, boolean, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import type { Ink } from '../rooms/Ink.js';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 
@@ -64,6 +65,7 @@ export const messages = pgTable('messages', {
   roomId: uuid('room_id').notNull().references(() => rooms.id, { onDelete: 'cascade' }),
   senderId: uuid('sender_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   body: text('body').notNull(),
+  ink: jsonb('ink').$type<Ink>(),
   signature: text('signature'),
   position: integer('position').notNull(),
   // Caller-supplied UUID makes retrying a send safe.

@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { createApp } from '../app.js';
 import { openPostgres } from './postgres.js';
-import { loginCodes, roomMembers, rooms } from './schema.js';
+import { loginCodes, messages, roomMembers, rooms } from './schema.js';
 
 // Never read DATABASE_URL here. This suite only accepts an explicitly named local test database.
 const raw = process.env.POSTGRES_TEST_URL;
@@ -138,4 +138,31 @@ it('serializes public joins with visibility changes across independent API insta
     request(i % 2 ? app : otherApp, `${path}/join`, 'POST', undefined, visitor)));
   expect(retries.every((r) => r.status === 200)).toBe(true);
   expect(await first.db.select().from(roomMembers).where(eq(roomMembers.roomId, room.id))).toHaveLength(2);
+});
+
+it('persists JSONB ink, tolerates reordered keys on concurrent retries, and erases drawings on removal', async () => {
+  const owner = await login(address('ink-owner'));
+  const created = await request(app, '/rooms', 'POST', { title: 'Handwritten memories' }, owner);
+  const { room } = await created.json() as { room: { id: string } };
+  const path = `/rooms/${room.id}/messages`;
+  const ink = { v: 1, lines: 3, width: 864, strokes: [[112, 40, 115, 52], [140, 61]] };
+  const reordered = { strokes: ink.strokes, width: ink.width, lines: ink.lines, v: ink.v };
+  const requestId = randomUUID();
+  const responses = await Promise.all(Array.from({ length: 6 }, (_, i) =>
+    request(i % 2 ? app : otherApp, path, 'POST', { requestId, ink: i % 2 ? ink : reordered }, owner)));
+  expect(responses.map((r) => r.status)).toEqual(Array(6).fill(201));
+  const receipts = await Promise.all(responses.map((r) => r.json() as Promise<{ message: { id: string; position: number } }>));
+  expect(new Set(receipts.map((r) => r.message.id)).size).toBe(1);
+  const receipt = receipts[0]!.message;
+  const fresh = openPostgres(raw);
+  try {
+    const read = await request(makeApp(fresh), path, 'GET', undefined, owner);
+    expect(await read.json()).toMatchObject({ messages: [{ body: '', ink, position: 1 }], nextAfter: 1 });
+  } finally { await fresh.close(); }
+  expect((await request(otherApp, path, 'POST', { requestId, ink: { ...ink, width: 900 } }, owner)).status).toBe(409);
+  expect((await request(otherApp, `${path}/${receipt.id}`, 'DELETE', undefined, owner)).status).toBe(200);
+  const [stored] = await first.db.select().from(messages).where(eq(messages.id, receipt.id));
+  expect(stored).toMatchObject({ ink: null, body: '', signature: null });
+  expect(stored!.removedAt).not.toBeNull();
+  expect((await request(app, path, 'POST', { requestId, ink }, owner)).status).toBe(409);
 });

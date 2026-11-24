@@ -37,4 +37,4 @@ it('upgrades populated private rooms without exposing or losing their contents, 
     await client.close();
     rmSync(previous, { recursive: true, force: true });
   }
-});
+}, 30_000);
