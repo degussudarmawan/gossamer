@@ -110,9 +110,10 @@ and the invitation hash. Public rooms converted to private can issue a link via 
 Visibility changes cannot retract content already read. Existing rooms remain private when
 migration `0002_high_stryfe.sql` runs. The migration adds a column/type/index without replacing data.
 
-The public-room frontend is being developed separately; backend support alone does not add
-those screens. Reporting/moderation and shared abuse limits remain launch work before public
-discovery is released to real users. Public discovery and personal room lists are capped at 100.
+This release integrates the public-room and handwriting screens with their APIs.
+Reporting/moderation and shared abuse limits are not implemented; the project plan still
+lists these as requirements for a broader public launch. Public discovery and personal room
+lists are capped at 100.
 
 ## Checks
 
@@ -200,7 +201,7 @@ command with a fresh disposable PostgreSQL database. It also checks restarts and
 failure handling, sends no emails, and removes its test stack afterward. CI runs both checks.
 
 The image packages the frontend present on the branch being built. The `release/pilot`
-branch includes the private-room screens and production backend together.
+branch includes private/public rooms, handwritten notes and the production backend together.
 
 ## Deployment
 
@@ -354,7 +355,7 @@ override that location. Package the compiled API, its SQL migrations and the web
 Check database backups and real email delivery before admitting users. Removing an email
 from the sign-in allowlist does not revoke an existing session.
 
-This branch includes private/public room APIs, the private-room frontend and optional public registration. Broader abuse
+This release includes private/public room APIs and screens, handwritten notes and optional public registration. Broader abuse
 controls, reporting and moderation remain future work. Running locally, committing or
 pushing does not deploy a site.
 
