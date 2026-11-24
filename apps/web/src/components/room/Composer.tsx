@@ -8,12 +8,14 @@ type Props = {
   roomId: string;
   /** What the room's owner asked people to write, if anything. */
   prompt: string;
+  /** A public room's notes can be read by anyone signed in, which the writer is told. */
+  isPublic: boolean;
   /** Called after the message is stored, so the room can close this and show it. */
   onSent: () => Promise<void> | void;
 };
 
 // The form for writing a message. Lives inside a Sheet.
-export default function Composer({ roomId, prompt, onSent }: Props) {
+export default function Composer({ roomId, prompt, isPublic, onSent }: Props) {
   const [body, setBody] = useState('');
   const [signature, setSignature] = useState('');
   const [busy, setBusy] = useState(false);
@@ -86,7 +88,7 @@ export default function Composer({ roomId, prompt, onSent }: Props) {
 
       <div className="flex items-center justify-between gap-4">
         <p role="status" className={note}>
-          {error ?? 'everyone in the room can read it.'}
+          {error ?? (isPublic ? 'a public room: anyone signed in can read it.' : 'everyone in the room can read it.')}
         </p>
         <button type="submit" disabled={busy || !body.trim()} className={`shrink-0 ${primary}`}>
           {busy ? 'sending…' : 'send'}

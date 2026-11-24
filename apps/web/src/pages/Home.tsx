@@ -140,7 +140,7 @@ export default function Home() {
               open a room
             </Link>
             <Link to="/join" className="text-ink underline decoration-1 underline-offset-4">
-              have a code?
+              join a room
             </Link>
           </motion.div>
         </div>

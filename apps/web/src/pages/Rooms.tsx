@@ -7,7 +7,7 @@ import type { Room } from '../lib/RoomApi';
 import { roomApi } from '../services';
 
 // Every room the signed-in person belongs to: the ones they opened and the
-// ones they joined with a code.
+// ones they joined, with a link or from the public rooms.
 export default function Rooms() {
   const [rooms, setRooms] = useState<Room[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +42,9 @@ export default function Rooms() {
               >
                 <span className="font-hand text-xl text-ink">{room.title}</span>
                 <span className="shrink-0 text-sm font-medium text-ink-soft">
-                  {[room.isOwner ? 'yours' : 'joined', room.closed ? 'closed' : null].filter(Boolean).join(' · ')}
+                  {[room.isOwner ? 'yours' : 'joined', room.visibility === 'public' ? 'public' : null, room.closed ? 'closed' : null]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </span>
               </Link>
             </li>
@@ -55,7 +57,7 @@ export default function Rooms() {
           open a room
         </Link>
         <Link to="/join" className={quiet}>
-          join with a code
+          join a room
         </Link>
       </div>
     </Page>
