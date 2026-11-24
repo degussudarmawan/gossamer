@@ -1,4 +1,5 @@
 import type { ApiClient } from './ApiClient';
+import { isInk, type Ink } from './ink';
 
 // The backend's room endpoints as plain methods. The contract is
 // docs/BACKEND.md on the backend branch. Whether someone may see or change a
@@ -39,16 +40,24 @@ const complete = (room: RoomFromServer): Room => ({
 
 export type Message = {
   id: string;
+  /** The note's words. For a handwritten note, its caption: empty when the writer gave none. */
   body: string;
   /** A name the writer chose to show. Not checked against who they are. */
   signature: string | null;
   /** This message's permanent number in the room, starting at 1. Never reused. */
   position: number;
   createdAt: string;
+  /** The writer's handwriting, for a note written by hand (docs/handoffs/handwritten-notes-api.md). */
+  ink: Ink | null;
 };
 
+// A backend without handwritten notes leaves `ink` out.
+type MessageFromServer = Omit<Message, 'ink'> & { ink?: unknown };
+
+/** A typed note has `body`; a handwritten one has `ink`, and `body` only as its caption. */
 export type Draft = {
-  body: string;
+  body?: string;
+  ink?: Ink;
   signature?: string;
   /** One id per intended message, kept across retries so a retry can't post twice. */
   requestId: string;
@@ -122,10 +131,11 @@ export class RoomApi {
     const all: Message[] = [];
     let after = 0;
     for (;;) {
-      const page = await this.http.get<{ messages: Message[]; nextAfter: number }>(
+      const page = await this.http.get<{ messages: MessageFromServer[]; nextAfter: number }>(
         `/rooms/${id}/messages?after=${after}`,
       );
-      all.push(...page.messages);
+      // ink the screens can't draw is left out rather than breaking the room
+      all.push(...page.messages.map((m) => ({ ...m, ink: isInk(m.ink) ? m.ink : null })));
       if (page.messages.length < 100) return all;
       after = page.nextAfter;
     }

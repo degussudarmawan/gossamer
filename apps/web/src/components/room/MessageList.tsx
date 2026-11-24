@@ -3,6 +3,7 @@ import { explain } from '../../lib/explain';
 import type { Message } from '../../lib/RoomApi';
 import { roomApi } from '../../services';
 import { note, quiet } from '../ui';
+import InkNote from './InkNote';
 
 type Props = {
   roomId: string;
@@ -57,8 +58,16 @@ export default function MessageList({ roomId, messages, isOwner, highlighted, on
             <div
               className={`rounded-xl px-3 py-3 transition-colors duration-700 ${highlighted === m.id ? 'bg-ink/10' : ''}`}
             >
-              {/* Plain text only. React escapes it, and pre-wrap keeps the writer's own line breaks. */}
-              <p className="text-lg leading-relaxed break-words whitespace-pre-wrap text-ink">{m.body}</p>
+              {m.ink ? (
+                // Handwriting as it was written, then what it says, if the writer typed it.
+                <>
+                  <InkNote ink={m.ink} label="a handwritten note" />
+                  {m.body && <p className="mt-2 text-sm font-medium break-words whitespace-pre-wrap text-ink-soft">{m.body}</p>}
+                </>
+              ) : (
+                // Plain text only. React escapes it, and pre-wrap keeps the writer's own line breaks.
+                <p className="text-lg leading-relaxed break-words whitespace-pre-wrap text-ink">{m.body}</p>
+              )}
               <p className={`mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 ${note}`}>
                 {m.signature && <span className="break-all">— {m.signature}</span>}
                 <time dateTime={m.createdAt} className="text-ink-soft/70">
